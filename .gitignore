@@ -1,0 +1,11 @@
+# Bytecode compilado do Python
+__pycache__/
+*.pyc
+
+# Banco de dados local (contas + histórico) — criado automaticamente pelo
+# servidor ao iniciar; não deve ir para o repositório (dados de teste,
+# hashes de senha reais de quem testou o projeto).
+*.db
+
+# Configuração local do Claude Code (não faz parte do projeto)
+.claude/
