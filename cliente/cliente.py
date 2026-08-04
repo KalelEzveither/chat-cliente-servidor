@@ -7,8 +7,8 @@ Cliente de chat cliente-servidor (Trabalho Pratico - Redes de Computadores 2).
 Responsabilidades do cliente:
   - Conectar-se ao servidor em um IP/porta configuraveis (nunca fixos em
     localhost/127.0.0.1 no codigo, conforme exigido pelo trabalho);
-  - Autenticar-se com apelido + senha (primeiro login com um apelido novo
-    cadastra a senha automaticamente no servidor);
+  - Identificar-se por um apelido unico ao entrar no chat (sem senha nem
+    conta -- so falha se o apelido ja estiver em uso no momento);
   - Exibir o historico de mensagens anteriores enviado pelo servidor logo
     apos o login;
   - Enviar mensagens de broadcast (sala atual) e mensagens privadas;
@@ -36,7 +36,6 @@ Comandos disponiveis apos conectar:
 """
 
 import argparse
-import getpass
 import os
 import socket
 import sys
@@ -61,11 +60,10 @@ Comandos disponiveis:
 
 
 class ClienteChat:
-    def __init__(self, host: str, porta: int, usuario: str, senha: str):
+    def __init__(self, host: str, porta: int, usuario: str):
         self.host = host
         self.porta = porta
         self.usuario = usuario
-        self.senha = senha
         self.sock = None
         self.leitor = None
         self.rodando = threading.Event()
@@ -81,9 +79,7 @@ class ClienteChat:
             return False
 
         self.leitor = protocolo.LeitorDeMensagens(self.sock)
-        protocolo.enviar(
-            self.sock, {"tipo": "LOGIN", "usuario": self.usuario, "senha": self.senha}
-        )
+        protocolo.enviar(self.sock, {"tipo": "LOGIN", "usuario": self.usuario})
 
         try:
             resposta = self.leitor.proxima_mensagem()
@@ -290,12 +286,6 @@ def main():
     parser.add_argument("--host", default=None, help="Endereco IP do servidor (ex.: 192.168.0.10).")
     parser.add_argument("--porta", type=int, default=None, help="Porta TCP do servidor (ex.: 5000).")
     parser.add_argument("--usuario", default=None, help="Apelido a ser usado no chat.")
-    parser.add_argument(
-        "--senha",
-        default=None,
-        help="Senha da conta (evite usar em maquinas compartilhadas: fica visivel no historico "
-        "do shell). Se omitida, e pedida de forma oculta no terminal.",
-    )
     args = parser.parse_args()
 
     host = args.host or input("IP do servidor: ").strip()
@@ -306,11 +296,8 @@ def main():
         print("[ERRO] Porta invalida.")
         sys.exit(1)
     usuario = args.usuario or input("Escolha seu apelido: ").strip()
-    senha = args.senha or getpass.getpass(
-        "Senha (se for a primeira vez com esse apelido, ela sera cadastrada agora): "
-    )
 
-    cliente = ClienteChat(host=host, porta=porta, usuario=usuario, senha=senha)
+    cliente = ClienteChat(host=host, porta=porta, usuario=usuario)
     if cliente.conectar():
         cliente.executar()
 

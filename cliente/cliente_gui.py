@@ -17,18 +17,19 @@ Uso:
     python3 cliente_gui.py [--host <IP_DO_SERVIDOR>] [--porta <PORTA>] [--usuario <APELIDO>]
 
     Os argumentos sao opcionais e servem apenas para pre-preencher os campos
-    da tela de conexao (a senha nunca e pre-preenchida por argumento, por
-    seguranca) -- a conexao so acontece quando o usuario clica em
-    "Conectar" na interface. O IP nunca fica fixo no codigo, atendendo ao
+    da tela de conexao -- a conexao so acontece quando o usuario clica em
+    "Entrar" na interface. O IP nunca fica fixo no codigo, atendendo ao
     requisito do trabalho de testar em maquinas distintas do laboratorio.
 
-    A conexao exige apelido + senha (autenticacao com auto-registro: se o
-    apelido for novo, a senha digitada e cadastrada na hora). Logo apos o
-    login, o cliente entra na sala padrao "geral" e o histórico de
-    mensagens anteriores relevantes para o usuario naquela sala e exibido
-    automaticamente no chat. E possivel trocar de sala/canal a qualquer
-    momento pelo campo "Sala atual" no painel direito (a sala e criada na
-    hora, caso ainda nao exista).
+    Nao ha senha nem conta: o apelido sozinho identifica o cliente
+    (requisito obrigatorio do trabalho); o LOGIN so e recusado se o
+    apelido ja estiver em uso por uma sessao ativa no momento.
+
+    Logo apos entrar, o cliente e colocado na sala padrao "geral" e pode
+    receber historico de mensagens (privadas, e gerais perdidas naquela
+    sala) automaticamente no chat. E possivel trocar de sala/canal a
+    qualquer momento pelo campo "Sala atual" no painel direito (a sala e
+    criada na hora, caso ainda nao exista).
 
 Arquitetura da GUI:
     - Thread principal: roda o loop de eventos do Tkinter (mainloop) e e a
@@ -115,26 +116,21 @@ class ClienteChatGUI:
         self.entrada_usuario = ttk.Entry(frame_conexao, textvariable=self.var_usuario, width=14)
         self.entrada_usuario.grid(row=0, column=5, padx=(0, 10))
 
-        ttk.Label(frame_conexao, text="Senha:").grid(row=0, column=6, padx=(0, 4))
-        self.var_senha = tk.StringVar(value="")
-        self.entrada_senha = ttk.Entry(frame_conexao, textvariable=self.var_senha, width=14, show="•")
-        self.entrada_senha.grid(row=0, column=7, padx=(0, 10))
+        self.botao_conectar = ttk.Button(frame_conexao, text="Entrar", command=self._ao_clicar_conectar)
+        self.botao_conectar.grid(row=0, column=6)
 
-        self.botao_conectar = ttk.Button(frame_conexao, text="Conectar", command=self._ao_clicar_conectar)
-        self.botao_conectar.grid(row=0, column=8)
-
-        for entrada in (self.entrada_host, self.entrada_porta, self.entrada_usuario, self.entrada_senha):
+        for entrada in (self.entrada_host, self.entrada_porta, self.entrada_usuario):
             entrada.bind("<Return>", lambda evento: self._ao_clicar_conectar())
 
         self.rotulo_status = ttk.Label(frame_conexao, text="Desconectado", foreground="#a33")
-        self.rotulo_status.grid(row=1, column=0, columnspan=9, sticky="w", pady=(4, 0))
+        self.rotulo_status.grid(row=1, column=0, columnspan=7, sticky="w", pady=(4, 0))
         self.rotulo_dica = ttk.Label(
             frame_conexao,
-            text="Dica: se o apelido for novo, a senha digitada é cadastrada automaticamente.",
+            text="Preencha IP, porta e um apelido, e clique em \"Entrar\".",
             foreground="#888888",
             font=("TkDefaultFont", 8),
         )
-        self.rotulo_dica.grid(row=2, column=0, columnspan=9, sticky="w")
+        self.rotulo_dica.grid(row=2, column=0, columnspan=7, sticky="w")
 
         # ---- Area central: chat (esquerda) + lista de usuarios (direita) ---- #
         frame_central = ttk.Frame(self.root, padding=(8, 0))
@@ -169,7 +165,7 @@ class ClienteChatGUI:
         self.entrada_sala.pack(side="left", fill="x", expand=True)
         self.entrada_sala.bind("<Return>", self._ao_trocar_sala)
         self.botao_trocar_sala = ttk.Button(
-            linha_troca_sala, text="Entrar", width=7, command=self._ao_trocar_sala, state="disabled"
+            linha_troca_sala, text="Trocar", width=7, command=self._ao_trocar_sala, state="disabled"
         )
         self.botao_trocar_sala.pack(side="left", padx=(4, 0))
 
@@ -224,46 +220,48 @@ class ClienteChatGUI:
     # Conexao / login (roda em thread separada para nao travar a janela)
     # ------------------------------------------------------------------ #
 
-    def _ao_clicar_conectar(self) -> None:
-        if self.conectado:
-            return
-
+    def _ler_e_validar_campos(self):
+        """Le e valida os campos do formulario. Retorna (host, porta,
+        usuario) se estiver tudo certo, ou None caso contrario (ja
+        mostrando o aviso apropriado)."""
         host = self.var_host.get().strip()
         usuario = self.var_usuario.get().strip()
         porta_texto = self.var_porta.get().strip()
-        senha = self.var_senha.get()
 
-        if not host or not porta_texto or not usuario or not senha:
-            messagebox.showwarning("Dados incompletos", "Preencha IP, porta, apelido e senha antes de conectar.")
-            return
+        if not host or not porta_texto or not usuario:
+            messagebox.showwarning("Dados incompletos", "Preencha IP, porta e apelido.")
+            return None
         try:
             porta = int(porta_texto)
         except ValueError:
             messagebox.showwarning("Porta inválida", "A porta deve ser um número inteiro.")
-            return
+            return None
         if not protocolo.validar_nome_usuario(usuario):
             messagebox.showwarning(
                 "Apelido inválido",
                 f"Use um apelido sem espaços, com até {protocolo.TAMANHO_MAX_USUARIO} "
                 "caracteres, que não comece com '/'.",
             )
-            return
-        if not protocolo.validar_senha(senha):
-            messagebox.showwarning(
-                "Senha inválida",
-                f"Use entre {protocolo.TAMANHO_MIN_SENHA} e {protocolo.TAMANHO_MAX_SENHA} caracteres.",
-            )
-            return
+            return None
+        return host, porta, usuario
 
-        self.botao_conectar.config(state="disabled", text="Conectando...")
+    def _ao_clicar_conectar(self) -> None:
+        if self.conectado:
+            return
+        campos = self._ler_e_validar_campos()
+        if campos is None:
+            return
+        host, porta, usuario = campos
+
+        self.botao_conectar.config(state="disabled", text="Entrando...")
         self.rotulo_status.config(text=f"Conectando a {host}:{porta}...", foreground="#a67c00")
 
         thread = threading.Thread(
-            target=self._conectar_em_thread, args=(host, porta, usuario, senha), daemon=True
+            target=self._conectar_em_thread, args=(host, porta, usuario), daemon=True
         )
         thread.start()
 
-    def _conectar_em_thread(self, host: str, porta: int, usuario: str, senha: str) -> None:
+    def _conectar_em_thread(self, host: str, porta: int, usuario: str) -> None:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(5)  # evita que a janela fique travada indefinidamente se o servidor nao responder
         try:
@@ -274,7 +272,7 @@ class ClienteChatGUI:
 
         leitor = protocolo.LeitorDeMensagens(sock)
         try:
-            protocolo.enviar(sock, {"tipo": "LOGIN", "usuario": usuario, "senha": senha})
+            protocolo.enviar(sock, {"tipo": "LOGIN", "usuario": usuario})
             resposta = leitor.proxima_mensagem()
         except (ConnectionResetError, OSError, ValueError) as erro:
             sock.close()
@@ -303,9 +301,9 @@ class ClienteChatGUI:
         self.root.after(0, self._ao_conectar_sucesso, host, porta)
 
     def _erro_conexao(self, motivo: str) -> None:
-        self.botao_conectar.config(state="normal", text="Conectar")
+        self.botao_conectar.config(state="normal", text="Entrar")
         self.rotulo_status.config(text="Desconectado", foreground="#a33")
-        messagebox.showerror("Erro de conexão", motivo)
+        messagebox.showerror("Erro ao entrar", motivo)
 
     def _ao_conectar_sucesso(self, host: str, porta: int) -> None:
         self.conectado = True
@@ -314,7 +312,6 @@ class ClienteChatGUI:
         self.entrada_host.config(state="disabled")
         self.entrada_porta.config(state="disabled")
         self.entrada_usuario.config(state="disabled")
-        self.entrada_senha.config(state="disabled")
         self.botao_conectar.config(text="Conectado ✓")
         self.rotulo_status.config(text=f"Conectado como '{self.usuario}' em {host}:{porta}", foreground="#1a7a1a")
 
@@ -576,8 +573,7 @@ class ClienteChatGUI:
         self.entrada_host.config(state="normal")
         self.entrada_porta.config(state="normal")
         self.entrada_usuario.config(state="normal")
-        self.entrada_senha.config(state="normal")
-        self.botao_conectar.config(state="normal", text="Conectar")
+        self.botao_conectar.config(state="normal", text="Entrar")
         self.rotulo_status.config(text="Desconectado", foreground="#a33")
 
         # Limpa o estado da sessao anterior (sala, alvo de privado, lista de

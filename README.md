@@ -1,13 +1,14 @@
 # Sistema de Chat Cliente-Servidor — Redes de Computadores 2
 
 Implementação em **Python 3** (biblioteca padrão apenas — módulos `socket`,
-`threading`, `json`, `argparse`, `sqlite3`, `hashlib`, `tkinter`), usando
-**TCP** e um protocolo de aplicação próprio sobre JSON.
+`threading`, `json`, `argparse`, `sqlite3`, `tkinter`), usando **TCP** e um
+protocolo de aplicação próprio sobre JSON.
 
-Além dos requisitos obrigatórios, foram implementados quatro itens opcionais
+Além dos requisitos obrigatórios, foram implementados três itens opcionais
 do enunciado: **interface gráfica** (tanto para o cliente quanto para o
-servidor), **autenticação com senha**, **persistência do histórico de
-mensagens** em banco de dados e **salas/canais temáticos**.
+servidor), **persistência do histórico de mensagens** em banco de dados e
+**salas/canais temáticos**. Não há sistema de contas/senha: cada cliente é
+identificado só pelo apelido, como pede o requisito obrigatório.
 
 ## Estrutura de pastas
 
@@ -19,7 +20,7 @@ chat_project/
 ├── servidor/
 │   ├── servidor.py        # servidor (multi-thread, um thread por cliente)
 │   ├── servidor_gui.py    # servidor com interface gráfica (Tkinter) — item opcional do enunciado
-│   └── bancodedados.py    # persistência SQLite: contas (senha) + histórico de mensagens
+│   └── bancodedados.py    # persistência SQLite: histórico de mensagens
 ├── cliente/
 │   ├── cliente.py         # cliente em modo texto/terminal (thread de recepção + thread de envio)
 │   └── cliente_gui.py     # cliente com interface gráfica (Tkinter) — item opcional do enunciado
@@ -74,8 +75,8 @@ python3 servidor/servidor.py --porta 5000
 ```
 
 Parâmetros opcionais: `--host` (padrão `0.0.0.0`), `--porta` (padrão `5000`)
-e `--banco` (padrão `chat.db`, o arquivo SQLite onde ficam as contas e o
-histórico — ver seção **Autenticação e histórico** abaixo).
+e `--banco` (padrão `chat.db`, o arquivo SQLite com o histórico de
+mensagens privadas — ver seção **Histórico de mensagens** abaixo).
 
 #### Servidor com interface gráfica (opcional)
 
@@ -111,21 +112,15 @@ python3 cliente/cliente.py --host <IP_DA_MAQUINA_SERVIDORA> --porta 5000 --usuar
 
 Se você não passar `--host`, `--porta` ou `--usuario`, o cliente pergunta
 interativamente — **o IP nunca é fixo no código**, exatamente como pede o
-enunciado, para permitir o teste em máquinas distintas no laboratório. A
-senha é sempre pedida separadamente, de forma oculta (`getpass`), e nunca
-aparece na tela.
+enunciado, para permitir o teste em máquinas distintas no laboratório.
 
-## Autenticação e histórico de mensagens
+## Identificação por apelido e histórico de mensagens
 
-- **Login com senha, com auto-registro:** ao conectar, cliente e servidor
-  trocam apelido + senha. Se o apelido nunca foi usado antes, a senha
-  digitada é cadastrada na hora (não existe uma tela separada de
-  "cadastro"); se o apelido já existe, a senha precisa bater com a
-  cadastrada da primeira vez, senão o login é recusado. Só é permitida uma
-  sessão ativa por apelido ao mesmo tempo.
-- As senhas **nunca** são guardadas em texto puro: o servidor grava um hash
-  PBKDF2-HMAC-SHA256 (100 mil iterações) com um sal aleatório por usuário
-  (`servidor/bancodedados.py`).
+- **Sem senha nem conta:** o apelido sozinho identifica o cliente (é o que
+  o enunciado exige — "identificação do usuário por um nome/apelido único
+  ao entrar no chat"). O login só é recusado se o apelido já estiver em
+  uso por uma sessão ativa no momento, ou se for inválido (vazio, com
+  espaço, ou começando com `/`).
 - **Histórico persistente**, gravado em SQLite (arquivo `chat.db`, criado
   automaticamente ao lado de `servidor.py`), com regras diferentes para
   cada tipo de mensagem:
@@ -179,9 +174,10 @@ cd chat_project
 python3 cliente/cliente_gui.py
 ```
 
-Uma janela abre com campos para IP, porta, apelido e senha — a conexão só
-ocorre ao clicar em **Conectar** (o IP também nunca é fixo no código aqui).
-Depois de conectado:
+Uma janela abre com campos para IP, porta e apelido (sem senha), e um botão
+**Entrar** — o login só é recusado se o apelido já estiver em uso por uma
+sessão ativa no momento (o IP também nunca é fixo no código aqui). Depois
+de conectado:
 
 - Digite no campo de texto e clique **Enviar** (ou tecle Enter) para mandar
   mensagem na sala atual;
@@ -189,19 +185,19 @@ Depois de conectado:
   mensagem para **privado** (o rótulo "Enviando para: ..." mostra o modo
   atual); clique em "🌐 Sala atual (broadcast)" para voltar ao modo broadcast;
 - No campo **"Sala atual"**, digite o nome de outra sala e clique
-  **Entrar** (ou tecle Enter) para trocar de canal — a sala é criada na hora
+  **Trocar** (ou tecle Enter) para mudar de canal — a sala é criada na hora
   se ainda não existir. O botão **"Ver salas ativas"** mostra no chat quais
   salas têm gente conectada agora;
 - O botão **↻** atualiza manualmente a lista de usuários da sala atual (a
   lista também se atualiza sozinha quando alguém entra ou sai dela);
 - O botão **Sair** (ou fechar a janela) encerra a conexão de forma
   controlada, enviando o comando `SAIR` ao servidor;
-- Logo após conectar, o histórico de mensagens anteriores (se houver)
+- Logo após entrar, o histórico de mensagens anteriores (se houver)
   aparece automaticamente no chat, em um tom mais claro, para diferenciar
   do que está acontecendo ao vivo.
 
 Você também pode pré-preencher os campos por linha de comando (a conexão
-ainda assim só é feita ao clicar em "Conectar"):
+ainda assim só é feita ao clicar em "Entrar"):
 
 ```bash
 python3 cliente/cliente_gui.py --host 192.168.0.10 --porta 5000 --usuario alice

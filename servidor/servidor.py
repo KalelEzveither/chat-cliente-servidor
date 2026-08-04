@@ -7,9 +7,10 @@ Servidor de chat cliente-servidor (Trabalho Pratico - Redes de Computadores 2).
 Responsabilidades do servidor:
   - Aceitar conexoes TCP de multiplos clientes simultaneamente (uma thread
     por cliente conectado);
-  - Autenticar usuarios por apelido + senha, com auto-registro no primeiro
-    login (ver servidor/bancodedados.py), e apenas uma sessao ativa por vez
-    por apelido;
+  - Identificar cada cliente por um apelido unico ao entrar no chat, com
+    apenas uma sessao ativa por vez por apelido (nao ha senha nem conta:
+    o apelido sozinho e a identificacao, como pede o requisito obrigatorio
+    do trabalho);
   - Rotear mensagens: broadcast por sala/canal, mensagens privadas, listagem
     de usuarios conectados (por sala) e notificacoes de entrada/saida;
   - Gerenciar salas/canais tematicos: todo cliente comeca na sala "geral" e
@@ -102,7 +103,7 @@ class ServidorChat:
 
     def iniciar(self) -> None:
         bancodedados.inicializar_banco(self.caminho_banco)
-        log(f"Banco de dados pronto em '{self.caminho_banco}' (contas + historico de mensagens).")
+        log(f"Banco de dados pronto em '{self.caminho_banco}' (historico de mensagens).")
 
         self.socket_servidor = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         # Permite reiniciar o servidor rapidamente na mesma porta (evita
@@ -195,8 +196,10 @@ class ServidorChat:
             self._remover_cliente(cliente)
 
     def _processar_login(self, cliente: ClienteConectado) -> bool:
-        """Le a mensagem LOGIN inicial, valida o apelido e autentica a senha
-        (com auto-registro no banco de dados, caso o apelido seja novo)."""
+        """Le a mensagem LOGIN inicial e valida o apelido. Nao ha senha nem
+        conta: o apelido sozinho identifica o cliente (requisito
+        obrigatorio do trabalho), e so e recusado se ja estiver em uso por
+        uma sessao ativa no momento."""
         try:
             mensagem = cliente.leitor.proxima_mensagem()
         except (ConnectionResetError, ConnectionAbortedError, OSError, ValueError):
@@ -207,7 +210,6 @@ class ServidorChat:
             return False
 
         nome = str(mensagem.get("usuario", "")).strip()
-        senha = str(mensagem.get("senha", ""))
 
         if not protocolo.validar_nome_usuario(nome):
             self._recusar_login(
@@ -215,21 +217,6 @@ class ServidorChat:
                 "Apelido invalido. Use um nome sem espacos, nao vazio, ate "
                 f"{protocolo.TAMANHO_MAX_USUARIO} caracteres e que nao comece com '/'.",
             )
-            return False
-
-        if not protocolo.validar_senha(senha):
-            self._recusar_login(
-                cliente,
-                f"Senha invalida. Use entre {protocolo.TAMANHO_MIN_SENHA} e "
-                f"{protocolo.TAMANHO_MAX_SENHA} caracteres.",
-            )
-            return False
-
-        # Autenticacao contra o banco de dados: se o apelido ja existe, a
-        # senha precisa bater; se nao existe, e cadastrado agora (auto-registro).
-        autenticado, motivo = bancodedados.autenticar_ou_registrar(self.caminho_banco, nome, senha)
-        if not autenticado:
-            self._recusar_login(cliente, motivo)
             return False
 
         with self.trava:
@@ -242,7 +229,7 @@ class ServidorChat:
         protocolo.enviar(cliente.sock, {"tipo": "LOGIN_OK", "usuario": nome})
         self._enviar_historico_privado(cliente)
         self._enviar_historico_geral(cliente)
-        log(f"Usuario '{nome}' autenticado ({cliente.endereco[0]}:{cliente.endereco[1]}).")
+        log(f"Usuario '{nome}' entrou ({cliente.endereco[0]}:{cliente.endereco[1]}).")
         return True
 
     def _enviar_historico_privado(self, cliente: ClienteConectado) -> None:
@@ -471,7 +458,7 @@ def main():
     parser.add_argument(
         "--banco",
         default="chat.db",
-        help="Caminho do arquivo SQLite para contas e historico de mensagens (padrao: chat.db).",
+        help="Caminho do arquivo SQLite para o historico de mensagens privadas (padrao: chat.db).",
     )
     args = parser.parse_args()
 

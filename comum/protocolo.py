@@ -28,14 +28,12 @@ ESTRUTURA GERAL DE UMA MENSAGEM
 
 TIPOS DE MENSAGEM (cliente -> servidor)
 -----------------------------------------
-LOGIN        {"tipo": "LOGIN", "usuario": "<nome>", "senha": "<senha>"}
-    Enviado logo apos a conexao TCP ser estabelecida, para autenticacao.
-    Sistema de autenticacao com AUTO-REGISTRO: se o apelido ainda nao existe
-    no banco de dados do servidor, a senha informada e cadastrada na hora
-    (primeiro acesso = cadastro); se o apelido ja existe, a senha precisa
-    bater com a que foi cadastrada da primeira vez, senao o login e
-    recusado (LOGIN_ERRO). As senhas nunca sao guardadas em texto puro no
-    servidor (ver servidor/bancodedados.py: hash PBKDF2-HMAC-SHA256 + sal).
+LOGIN        {"tipo": "LOGIN", "usuario": "<nome>"}
+    Enviado logo apos a conexao TCP ser estabelecida, como PRIMEIRA
+    mensagem, para identificar o cliente e entrar no chat. Nao ha senha
+    nem conta: o apelido sozinho identifica o cliente (requisito
+    obrigatorio do trabalho). So e recusado (LOGIN_ERRO) se o apelido for
+    invalido ou ja estiver em uso por uma sessao ativa no momento.
 
 MSG          {"tipo": "MSG", "texto": "<conteudo>"}
     Mensagem de broadcast: sera repassada pelo servidor a todos os demais
@@ -84,9 +82,8 @@ LOGIN_OK     {"tipo": "LOGIN_OK", "usuario": "<nome>"}
     perdidas na sala "geral" (ver HISTORICO).
 
 LOGIN_ERRO   {"tipo": "LOGIN_ERRO", "motivo": "<mensagem>"}
-    Apelido invalido, senha incorreta para um apelido ja cadastrado, ou
-    apelido com uma sessao ja ativa no momento; a conexao e encerrada apos
-    o envio.
+    Apelido invalido, ou apelido com uma sessao ja ativa no momento; a
+    conexao e encerrada apos o envio.
 
 HISTORICO    {"tipo": "HISTORICO", "sala": "<nome>" (OPCIONAL), "mensagens": [
                  {"tipo": "PRIVADA"|"MSG", "de": "<usuario>",
@@ -158,9 +155,6 @@ CODIFICACAO = "utf-8"
 TAMANHO_MAX_USUARIO = 32
 # Tamanho maximo aceito para o corpo de uma mensagem de texto.
 TAMANHO_MAX_TEXTO = 2000
-# Tamanho minimo/maximo aceito para uma senha.
-TAMANHO_MIN_SENHA = 4
-TAMANHO_MAX_SENHA = 64
 # Tamanho maximo aceito para um nome de sala/canal.
 TAMANHO_MAX_SALA = 32
 # Sala em que todo cliente e colocado automaticamente ao logar.
@@ -244,15 +238,6 @@ def validar_nome_usuario(nome: str) -> bool:
 def validar_nome_sala(nome: str) -> bool:
     """Valida se um nome de sala/canal e aceitavel (mesma regra do apelido)."""
     return _identificador_valido(nome, TAMANHO_MAX_SALA)
-
-
-def validar_senha(senha: str) -> bool:
-    """Valida se uma senha e aceitavel: nao vazia e dentro do tamanho permitido."""
-    if not senha:
-        return False
-    if len(senha) < TAMANHO_MIN_SENHA or len(senha) > TAMANHO_MAX_SENHA:
-        return False
-    return True
 
 
 def formatar_quando(timestamp_iso: str) -> str:

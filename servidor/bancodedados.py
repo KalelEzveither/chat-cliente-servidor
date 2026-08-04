@@ -5,11 +5,8 @@ servidor/bancodedados.py
 Camada de persistencia do servidor, usando SQLite (modulo `sqlite3` da
 biblioteca padrao do Python -- nao precisa instalar nada).
 
-Implementa tres requisitos opcionais do trabalho:
-  1. "Sistema de autenticacao com senha": tabela `usuarios`, com senha
-     protegida por hash + sal (nunca em texto puro), e AUTO-REGISTRO no
-     primeiro login com um apelido novo;
-  2. "Persistencia do historico de mensagens em arquivo ou banco de dados":
+Implementa dois requisitos opcionais do trabalho:
+  1. "Persistencia do historico de mensagens em arquivo ou banco de dados":
      tabela `mensagens`. Duas categorias, com regras diferentes:
        - PRIVADAS: sempre entram no historico de quem enviou/recebeu,
          reenviadas uma unica vez logo apos o login (independem de sala);
@@ -23,8 +20,12 @@ Implementa tres requisitos opcionais do trabalho:
          Quem nunca esteve numa sala antes (sem registro de saida) nao
          recebe nada -- so passa a ver as mensagens dali em diante, ao
          vivo.
-  3. "Criacao de salas/canais tematicos": ver `servidor/servidor.py`
+  2. "Criacao de salas/canais tematicos": ver `servidor/servidor.py`
      (roteamento de broadcast/lista por sala).
+
+Nao ha sistema de contas/senha: o apelido sozinho identifica o cliente
+(requisito obrigatorio do trabalho), sem persistencia nem autenticacao
+associada a ele.
 
 Sincronizacao: cada funcao abre e fecha sua propria conexao sqlite3 (o
 arquivo de banco e local, em disco). Um Lock global (`_TRAVA`) serializa o
@@ -33,8 +34,6 @@ escrita por vez -- sem o lock, threads concorrentes de clientes diferentes
 poderiam esbarrar em erros de "database is locked".
 """
 
-import hashlib
-import secrets
 import sqlite3
 import threading
 from datetime import datetime, timezone
@@ -42,13 +41,6 @@ from datetime import datetime, timezone
 _TRAVA = threading.Lock()
 
 _SQL_CRIAR_TABELAS = """
-CREATE TABLE IF NOT EXISTS usuarios (
-    usuario     TEXT PRIMARY KEY,
-    sal         TEXT NOT NULL,
-    hash_senha  TEXT NOT NULL,
-    criado_em   TEXT NOT NULL
-);
-
 CREATE TABLE IF NOT EXISTS mensagens (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     tipo         TEXT NOT NULL,        -- 'MSG' (chat geral) ou 'PRIVADA'
@@ -67,11 +59,6 @@ CREATE TABLE IF NOT EXISTS ultima_saida_sala (
 );
 """
 
-# Numero de iteracoes do PBKDF2: alto o suficiente para dificultar ataque de
-# forca bruta offline, mas rapido o bastante para nao atrasar o login.
-_ITERACOES_PBKDF2 = 100_000
-
-
 def inicializar_banco(caminho: str) -> None:
     """Cria o arquivo de banco de dados e as tabelas, caso ainda nao existam.
     Deve ser chamada uma vez, quando o servidor inicia."""
@@ -82,44 +69,6 @@ def inicializar_banco(caminho: str) -> None:
         colunas = [linha[1] for linha in conexao.execute("PRAGMA table_info(mensagens)").fetchall()]
         if "sala" not in colunas:
             conexao.execute("ALTER TABLE mensagens ADD COLUMN sala TEXT")
-
-
-def _gerar_hash(senha: str, sal: bytes) -> str:
-    """Deriva o hash de uma senha usando PBKDF2-HMAC-SHA256 com sal."""
-    derivado = hashlib.pbkdf2_hmac("sha256", senha.encode("utf-8"), sal, _ITERACOES_PBKDF2)
-    return derivado.hex()
-
-
-def autenticar_ou_registrar(caminho: str, usuario: str, senha: str):
-    """
-    Autentica um usuario existente, ou cadastra automaticamente um usuario
-    novo com a senha informada (auto-registro no primeiro login).
-
-    Retorna uma tupla (sucesso: bool, motivo: str | None). `motivo` so vem
-    preenchido quando sucesso e False, para ser exibido ao usuario.
-    """
-    with _TRAVA, sqlite3.connect(caminho) as conexao:
-        linha = conexao.execute(
-            "SELECT sal, hash_senha FROM usuarios WHERE usuario = ?", (usuario,)
-        ).fetchone()
-
-        if linha is None:
-            # Apelido nunca visto antes: cadastra a senha informada agora.
-            sal = secrets.token_bytes(16)
-            hash_senha = _gerar_hash(senha, sal)
-            conexao.execute(
-                "INSERT INTO usuarios (usuario, sal, hash_senha, criado_em) VALUES (?, ?, ?, ?)",
-                (usuario, sal.hex(), hash_senha, datetime.now(timezone.utc).isoformat()),
-            )
-            return True, None
-
-        sal_hex, hash_esperado = linha
-        hash_recebido = _gerar_hash(senha, bytes.fromhex(sal_hex))
-        # Comparacao em tempo constante, para nao vazar informacao sobre a
-        # senha correta atraves do tempo de resposta (timing attack).
-        if not secrets.compare_digest(hash_recebido, hash_esperado):
-            return False, "Senha incorreta para esse apelido."
-        return True, None
 
 
 # ---------------------------------------------------------------------- #
