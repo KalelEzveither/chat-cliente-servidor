@@ -1,4 +1,4 @@
-# Sistema de Chat Cliente-Servidor — Redes de Computadores 2
+# Fala Daí — Sistema de Chat Cliente-Servidor (Redes de Computadores 2)
 
 Implementação em **Python 3** (biblioteca padrão apenas — módulos `socket`,
 `threading`, `json`, `argparse`, `sqlite3`, `tkinter`), usando **TCP** e um
@@ -16,7 +16,8 @@ identificado só pelo apelido, como pede o requisito obrigatório.
 chat_project/
 ├── comum/
 │   ├── __init__.py
-│   └── protocolo.py       # protocolo de aplicação compartilhado (formato das mensagens)
+│   ├── protocolo.py       # protocolo de aplicação compartilhado (formato das mensagens)
+│   └── estilo.py          # visual compartilhado pelas 3 janelas (cores, fontes, marca "Fala Daí")
 ├── servidor/
 │   ├── servidor.py        # servidor (multi-thread, um thread por cliente)
 │   ├── servidor_gui.py    # servidor com interface gráfica (Tkinter) — item opcional do enunciado
@@ -27,6 +28,12 @@ chat_project/
 ├── iniciar.py              # tela inicial: escolher "Servidor" ou "Cliente" (atalho para as GUIs acima)
 └── README.md
 ```
+
+As três janelas gráficas do projeto (launcher, servidor e cliente)
+compartilham a mesma identidade visual — mesma paleta de cores, mesma
+tipografia, mesmos componentes — definida uma única vez em
+`comum/estilo.py` e reaproveitada nas três telas.
+
 
 ### Jeito mais rápido de começar
 
