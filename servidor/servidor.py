@@ -227,8 +227,12 @@ class ServidorChat:
             self.clientes[nome] = cliente
 
         protocolo.enviar(cliente.sock, {"tipo": "LOGIN_OK", "usuario": nome})
-        self._enviar_historico_privado(cliente)
-        self._enviar_historico_geral(cliente)
+
+        usuario_ja_conhecido = bancodedados.registrar_login_e_verificar_se_conhecido(self.caminho_banco, nome)
+        if usuario_ja_conhecido:
+            self._enviar_historico_privado(cliente)
+            self._enviar_historico_geral(cliente)
+
         log(f"Usuario '{nome}' entrou ({cliente.endereco[0]}:{cliente.endereco[1]}).")
         return True
 

@@ -222,6 +222,11 @@ python3 cliente/cliente_gui.py --host 192.168.0.10 --porta 5000 --usuario alice
 > `sudo apt install python3-tk` (Ubuntu/Debian) e tente novamente. No Windows
 > e no macOS o Tkinter já vem junto com o Python.
 
+A janela se dimensiona automaticamente com base na resolução da tela (e
+reconhece a escala de DPI do Windows), então ela sempre abre cabendo por
+inteiro na tela, sem precisar redimensionar na mão para ver a caixa de
+mensagem.
+
 ## Testando em duas máquinas antes do dia da apresentação
 
 1. Rode o servidor em uma máquina e anote o IP dela.

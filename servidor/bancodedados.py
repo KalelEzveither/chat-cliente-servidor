@@ -5,11 +5,11 @@ servidor/bancodedados.py
 Camada de persistencia do servidor, usando SQLite (modulo `sqlite3` da
 biblioteca padrao do Python -- nao precisa instalar nada).
 
-Implementa dois requisitos opcionais do trabalho:
+Implementa tres requisitos opcionais do trabalho:
   1. "Persistencia do historico de mensagens em arquivo ou banco de dados":
      tabela `mensagens`. Duas categorias, com regras diferentes:
-       - PRIVADAS: sempre entram no historico de quem enviou/recebeu,
-         reenviadas uma unica vez logo apos o login (independem de sala);
+       - PRIVADAS: entram no historico de quem enviou/recebeu, reenviadas
+         uma unica vez logo apos o login (independem de sala);
        - GERAIS (broadcast): NAO reenviadas de uma vez so pra todo mundo
          que entra numa sala (isso inundaria um usuario novo com conversa
          antiga que nao diz respeito a ele). Em vez disso, usa-se um
@@ -17,15 +17,24 @@ Implementa dois requisitos opcionais do trabalho:
          quando cada usuario saiu de cada sala pela ultima vez (troca de
          sala ou desconexao); ao (re)entrar numa sala, o servidor manda so
          as mensagens gerais daquela sala enviadas DEPOIS desse momento.
-         Quem nunca esteve numa sala antes (sem registro de saida) nao
-         recebe nada -- so passa a ver as mensagens dali em diante, ao
-         vivo.
-  2. "Criacao de salas/canais tematicos": ver `servidor/servidor.py`
+  2. Regra de acesso ao historico: SO usuarios que JA se conectaram ao
+     servidor alguma vez antes (em qualquer sessao anterior) recebem
+     historico (privado e/ou geral) ao logar. Um apelido usado pela
+     PRIMEIRA vez nunca recebe historico, mesmo que a sala ja tenha
+     conversa acontecendo ha tempos -- ele so passa a ver dali em diante,
+     ao vivo. Isso e controlado pela tabela `usuarios_conhecidos`: no
+     login, o servidor verifica se aquele apelido ja tem um registro la;
+     se nao tiver, ele e criado NA HORA (para a proxima vez que alguem
+     conectar com esse mesmo apelido ja contar como "ja conhecido"), mas
+     a sessao atual e tratada como novata e nao recebe nada de historico.
+  3. "Criacao de salas/canais tematicos": ver `servidor/servidor.py`
      (roteamento de broadcast/lista por sala).
 
 Nao ha sistema de contas/senha: o apelido sozinho identifica o cliente
-(requisito obrigatorio do trabalho), sem persistencia nem autenticacao
-associada a ele.
+(requisito obrigatorio do trabalho). A tabela `usuarios_conhecidos` NAO e
+autenticacao (qualquer um pode conectar com qualquer apelido livre) -- ela
+so guarda "esse nome ja apareceu aqui antes?" para decidir se mostra
+historico ou nao.
 
 Sincronizacao: cada funcao abre e fecha sua propria conexao sqlite3 (o
 arquivo de banco e local, em disco). Um Lock global (`_TRAVA`) serializa o
@@ -57,6 +66,11 @@ CREATE TABLE IF NOT EXISTS ultima_saida_sala (
     quando   TEXT NOT NULL,            -- timestamp ISO-8601 em UTC
     PRIMARY KEY (usuario, sala)
 );
+
+CREATE TABLE IF NOT EXISTS usuarios_conhecidos (
+    usuario         TEXT PRIMARY KEY,
+    primeiro_login  TEXT NOT NULL      -- timestamp ISO-8601 em UTC
+);
 """
 
 def inicializar_banco(caminho: str) -> None:
@@ -69,6 +83,36 @@ def inicializar_banco(caminho: str) -> None:
         colunas = [linha[1] for linha in conexao.execute("PRAGMA table_info(mensagens)").fetchall()]
         if "sala" not in colunas:
             conexao.execute("ALTER TABLE mensagens ADD COLUMN sala TEXT")
+
+
+# ---------------------------------------------------------------------- #
+# Controle de "usuario ja conhecido": decide quem recebe historico.
+# ---------------------------------------------------------------------- #
+
+def registrar_login_e_verificar_se_conhecido(caminho: str, usuario: str) -> bool:
+    """
+    Chamada uma vez, logo apos um login ser aceito. Retorna:
+      - True  se esse apelido JA tinha se conectado alguma vez antes (ou
+              seja, e um usuario "conhecido" -- deve receber historico);
+      - False se essa e a PRIMEIRA vez que esse apelido conecta (usuario
+              novo -- nao deve receber nenhum historico agora).
+
+    Em qualquer um dos dois casos, garante que o apelido fique registrado
+    em `usuarios_conhecidos` a partir de agora, para que da proxima vez
+    que alguem conectar com esse mesmo apelido a resposta seja True.
+    """
+    agora = datetime.now(timezone.utc).isoformat()
+    with _TRAVA, sqlite3.connect(caminho) as conexao:
+        linha = conexao.execute(
+            "SELECT 1 FROM usuarios_conhecidos WHERE usuario = ?", (usuario,)
+        ).fetchone()
+        if linha is not None:
+            return True
+        conexao.execute(
+            "INSERT INTO usuarios_conhecidos (usuario, primeiro_login) VALUES (?, ?)",
+            (usuario, agora),
+        )
+        return False
 
 
 # ---------------------------------------------------------------------- #

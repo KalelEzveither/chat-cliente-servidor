@@ -6,9 +6,8 @@ Cliente de chat cliente-servidor com INTERFACE GRAFICA (Tkinter), implementando
 o item opcional do enunciado ("Interface grafica (GUI) em vez de terminal").
 
 Usa exatamente o mesmo protocolo de aplicacao definido em `comum/protocolo.py`
-e o mesmo servidor de `servidor/servidor.py` -- ou seja, este e apenas um
-"front-end" alternativo ao `cliente/cliente.py` (modo texto), sem nenhuma
-mudanca no protocolo nem no servidor alem do aviso efemero de "digitando...".
+e o mesmo servidor de `servidor/servidor.py` -- este e apenas um "front-end"
+alternativo ao `cliente/cliente.py` (modo texto).
 
 Bibliotecas usadas: apenas a biblioteca padrao do Python (tkinter, socket,
 threading, queue, time, argparse), sem dependencias externas.
@@ -18,25 +17,26 @@ Uso:
 
     Os argumentos sao opcionais e servem apenas para pre-preencher os campos
     da tela de conexao -- a conexao so acontece quando o usuario clica em
-    "Entrar" na interface. O IP nunca fica fixo no codigo, atendendo ao
-    requisito do trabalho de testar em maquinas distintas do laboratorio.
+    "Entrar". O IP nunca fica fixo no codigo, atendendo ao requisito de
+    testar em maquinas distintas do laboratorio.
 
 Recursos desta interface:
-    - Aba "Usuários": lista de quem está na sala atual; clicar em alguém
-      abre (ou volta para) a conversa PRIVADA com essa pessoa.
-    - Aba "Salas ativas": lista as salas com gente conectada agora (com a
-      contagem de usuários), e permite entrar em qualquer uma delas, ou
-      digitar o nome de uma sala nova para criá-la na hora.
-    - Aba "Privadas": lista de conversas privadas já iniciadas, com um
-      indicador de quantas mensagens não lidas há em cada uma.
-    - O histórico de cada conversa privada fica isolado da conversa da
-      sala: cada uma tem sua própria "linha do tempo"; trocar de aba/
-      contato só troca o que é exibido, nunca mistura as duas.
-    - Indicador de "fulano está digitando..." relativo à conversa aberta
-      no momento (sala ou privada).
-    - Notificação (toast) quando chega uma mensagem privada de uma
-      conversa que não é a que está aberta no momento, com um contador de
-      não lidas na aba "Privadas".
+    - Aba "Usuários": quem está na sala atual; clicar em alguém abre uma
+      conversa PRIVADA com essa pessoa.
+    - Aba "Salas": todas as salas com gente conectada agora, com contagem
+      de usuários; clicar entra nela (ou cria uma nova, se o nome digitado
+      ainda não existir).
+    - Aba "Privadas": conversas privadas já iniciadas, com indicador de
+      quantas mensagens não lidas há em cada uma.
+    - Navegação por "breadcrumb" no topo da conversa (# sala / › contato)
+      -- sempre visível, um clique volta para a sala a qualquer momento.
+    - Histórico de cada conversa privada isolado da conversa da sala: cada
+      uma tem sua própria linha do tempo.
+    - Indicador de "fulano está digitando..." e notificação (toast) de
+      mensagem privada nova, com contador de não lidas.
+    - Janela dimensionada dinamicamente com base na resolução real da
+      tela (e com reconhecimento de DPI no Windows), para nunca abrir
+      maior do que a tela do usuário.
 
 Arquitetura da GUI:
     - Thread principal: roda o loop de eventos do Tkinter (mainloop) e e a
@@ -47,7 +47,7 @@ Arquitetura da GUI:
       servidor durante toda a sessao, e as coloca numa fila (queue.Queue).
     - A thread principal consome essa fila periodicamente (root.after) e so
       ai atualiza a tela -- assim nunca se mexe em widget fora da thread
-      principal, o que evitaria comportamento indefinido/crash no Tkinter.
+      principal.
 """
 
 import argparse
@@ -63,28 +63,58 @@ from tkinter import messagebox, ttk
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from comum import protocolo
 
-COR_FUNDO = "#0f172a"
-COR_PAINEL = "#1a2333"
-COR_PAINEL_2 = "#212c42"
-COR_CAMPO = "#28324a"
-COR_BORDA = "#334155"
-COR_TEXTO = "#e2e8f0"
-COR_TEXTO_SUAVE = "#8b98b3"
-COR_DESTAQUE = "#6366f1"
-COR_DESTAQUE_HOVER = "#4f46e5"
-COR_PRIVADA = "#a855f7"
-COR_SUCESSO = "#22c55e"
-COR_ERRO = "#ef4444"
-COR_CHAT_FUNDO = "#f8fafc"
-COR_BOLHA_TXT = "#1e293b"
+# Reconhecimento de DPI no Windows: sem isso, o Windows pode escalar a
+# janela toda (ex.: 125%/150%) sem o Tkinter saber, fazendo a janela
+# "vazar" para baixo da tela visivel -- e foi exatamente esse o motivo do
+# campo de mensagem parecer sumir, obrigando a redimensionar a janela na
+# mao. Isso precisa rodar ANTES de qualquer janela Tk ser criada.
+if sys.platform == "win32":
+    try:
+        import ctypes
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)
+    except Exception:
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
 
+
+# ------------------------------------------------------------------------ #
+# Paleta e tipografia
+#
+# Grafite quente (nao azul-marinho) + um unico par de cores de destaque com
+# significado proprio: verde-azulado (teal) = "publico" (sala/voce), ambar
+# = "privado". Fundo do chat em papel creme, nao branco/azulado frio.
+# ------------------------------------------------------------------------ #
+COR_FUNDO = "#211f1b"
+COR_PAINEL = "#2a2823"
+COR_PAINEL_2 = "#34312a"
+COR_CAMPO = "#3d392f"
+COR_BORDA = "#4a4638"
+COR_TEXTO = "#efe9dc"
+COR_TEXTO_SUAVE = "#a39d8a"
+COR_DESTAQUE = "#0d9488"
+COR_DESTAQUE_HOVER = "#0f766e"
+COR_PRIVADA = "#b45309"
+COR_PRIVADA_HOVER = "#92400e"
+COR_SUCESSO = "#65a30d"
+COR_ERRO = "#dc2626"
+COR_CHAT_FUNDO = "#faf7f1"
+COR_BOLHA_TXT = "#28241d"
+COR_AVATAR_NEUTRO = "#57503f"
+COR_SAIR_BG = "#3a2621"
+COR_SAIR_FG = "#f0b6a4"
+COR_SAIR_BG_HOVER = "#4a2f28"
+
+FONTE_DISPLAY = ("Georgia", 22, "bold")
+FONTE_NOME_TOPO = ("Georgia", 14, "bold")
+FONTE_NOME_CHIP = ("Segoe UI", 10, "bold")
 FONTE_BASE = ("Segoe UI", 10)
 FONTE_NEGRITO = ("Segoe UI", 10, "bold")
-FONTE_TITULO = ("Segoe UI", 15, "bold")
-FONTE_SUBTITULO = ("Segoe UI", 10, "bold")
 FONTE_PEQUENA = ("Segoe UI", 8)
 FONTE_PEQUENA_IT = ("Segoe UI", 8, "italic")
 FONTE_MENSAGEM = ("Segoe UI", 10)
+FONTE_ROTULO_ABA = ("Segoe UI", 8, "bold")
 
 SEGUNDOS_EXPIRAR_DIGITANDO = 3.0
 INTERVALO_MINIMO_ENVIO_DIGITANDO = 1.2
@@ -114,10 +144,89 @@ def _configurar_estilo_ttk():
         foreground=[("selected", "white")],
     )
     estilo.configure("Chat.TFrame", background=COR_PAINEL)
+    estilo.configure("Chat.Vertical.TScrollbar", background=COR_PAINEL_2, troughcolor=COR_PAINEL, borderwidth=0, arrowsize=12)
 
 
 def _hora_agora() -> str:
     return time.strftime("%H:%M")
+
+
+def _inicial(nome: str) -> str:
+    return (nome[:1] or "?").upper()
+
+
+def _criar_avatar(parent, nome: str, bg_pai: str, tamanho: int = 30, destaque: bool = False) -> tk.Canvas:
+    """Desenha um avatar circular simples (iniciais) num Canvas pequeno.
+    Evita depender de emojis/ícones prontos para identificar pessoas."""
+    canvas = tk.Canvas(parent, width=tamanho, height=tamanho, bg=bg_pai, highlightthickness=0, bd=0)
+    cor = COR_DESTAQUE if destaque else COR_AVATAR_NEUTRO
+    canvas.create_oval(1, 1, tamanho - 1, tamanho - 1, fill=cor, outline="")
+    canvas.create_text(
+        tamanho / 2, tamanho / 2 + 1, text=_inicial(nome), fill="white",
+        font=("Segoe UI", max(9, int(tamanho * 0.4)), "bold"),
+    )
+    return canvas
+
+
+def _tornar_clicavel(widgets, ao_clicar, cor_normal, cor_hover) -> None:
+    """Vincula clique + destaque ao passar o mouse a um conjunto de widgets
+    que formam uma única "linha" clicável (usado nas listas da barra
+    lateral)."""
+    def _entrar(_evento=None):
+        for w in widgets:
+            try:
+                w.configure(bg=cor_hover)
+            except tk.TclError:
+                pass
+
+    def _sair(_evento=None):
+        for w in widgets:
+            try:
+                w.configure(bg=cor_normal)
+            except tk.TclError:
+                pass
+
+    def _clicar(_evento=None):
+        ao_clicar()
+
+    for w in widgets:
+        w.bind("<Enter>", _entrar)
+        w.bind("<Leave>", _sair)
+        w.bind("<Button-1>", _clicar)
+        try:
+            w.configure(cursor="hand2")
+        except tk.TclError:
+            pass
+
+
+class ListaRolavel(tk.Frame):
+    """Painel com rolagem vertical para empilhar linhas customizadas
+    (usado nas três listas da barra lateral: usuários, salas e privadas).
+    Tk não tem um widget de lista "rica" pronto -- isso é o padrão comum
+    para simular um com Canvas + Frame interno + Scrollbar."""
+
+    def __init__(self, parent, bg: str):
+        super().__init__(parent, bg=bg)
+        self._bg = bg
+        self.canvas = tk.Canvas(self, bg=bg, highlightthickness=0, bd=0)
+        self.scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview, style="Chat.Vertical.TScrollbar")
+        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+        self.scrollbar.pack(side="right", fill="y")
+        self.canvas.pack(side="left", fill="both", expand=True)
+
+        self.frame_interno = tk.Frame(self.canvas, bg=bg)
+        self._janela = self.canvas.create_window((0, 0), window=self.frame_interno, anchor="nw")
+        self.frame_interno.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
+        self.canvas.bind("<Configure>", lambda e: self.canvas.itemconfig(self._janela, width=e.width))
+        self.canvas.bind("<Enter>", lambda e: self.canvas.bind_all("<MouseWheel>", self._rolar))
+        self.canvas.bind("<Leave>", lambda e: self.canvas.unbind_all("<MouseWheel>"))
+
+    def _rolar(self, evento) -> None:
+        self.canvas.yview_scroll(int(-1 * (evento.delta / 120)), "units")
+
+    def limpar(self) -> None:
+        for w in self.frame_interno.winfo_children():
+            w.destroy()
 
 
 class ClienteChatGUI:
@@ -125,9 +234,8 @@ class ClienteChatGUI:
 
     def __init__(self, root, host: str, porta, usuario: str):
         self.root = root
-        self.root.title("Chat Cliente-Servidor")
-        self.root.geometry("1040x650")
-        self.root.minsize(860, 500)
+        self.root.title("Sala de Chat")
+        self._ajustar_geometria_a_tela()
         self.root.configure(bg=COR_FUNDO)
         _configurar_estilo_ttk()
 
@@ -148,8 +256,6 @@ class ClienteChatGUI:
         self.digitando = {}
         self._ultimo_envio_digitando = 0.0
         self._toasts_ativos = []
-        self._cache_usuarios = []
-        self._cache_salas = []
 
         self.container = tk.Frame(self.root, bg=COR_FUNDO)
         self.container.pack(fill="both", expand=True)
@@ -162,6 +268,20 @@ class ClienteChatGUI:
         self.root.after(100, self._processar_fila)
         self.root.after(500, self._atualizar_indicador_digitando)
 
+    def _ajustar_geometria_a_tela(self) -> None:
+        """Calcula um tamanho de janela que cabe confortavelmente na tela
+        do usuário (com folga para barra de tarefas etc.) e centraliza,
+        em vez de usar um tamanho fixo que pode ultrapassar telas menores
+        ou telas com escala de DPI diferente."""
+        largura_tela = self.root.winfo_screenwidth()
+        altura_tela = self.root.winfo_screenheight()
+        largura = max(760, min(1020, largura_tela - 100))
+        altura = max(480, min(640, altura_tela - 140))
+        x = max(0, (largura_tela - largura) // 2)
+        y = max(0, (altura_tela - altura) // 2)
+        self.root.geometry(f"{largura}x{altura}+{x}+{y}")
+        self.root.minsize(min(720, largura), min(440, altura))
+
     # ====================================================================
     # TELA DE LOGIN
     # ====================================================================
@@ -170,12 +290,15 @@ class ClienteChatGUI:
         self.frame_login = tk.Frame(self.container, bg=COR_FUNDO)
         self.frame_login.pack(fill="both", expand=True)
 
-        card = tk.Frame(self.frame_login, bg=COR_PAINEL, padx=40, pady=34)
+        card = tk.Frame(self.frame_login, bg=COR_PAINEL, padx=42, pady=36)
         card.place(relx=0.5, rely=0.45, anchor="center")
 
-        tk.Label(card, text="💬", font=("Segoe UI Emoji", 30), bg=COR_PAINEL, fg=COR_DESTAQUE).pack(pady=(0, 4))
-        tk.Label(card, text="Chat Cliente-Servidor", font=FONTE_TITULO, bg=COR_PAINEL, fg="white").pack()
-        tk.Label(card, text="Redes de Computadores II", font=FONTE_BASE, bg=COR_PAINEL, fg=COR_TEXTO_SUAVE).pack(pady=(0, 22))
+        tk.Label(card, text="Sala de Chat", font=FONTE_DISPLAY, bg=COR_PAINEL, fg=COR_TEXTO).pack()
+        tk.Frame(card, bg=COR_DESTAQUE, width=38, height=3).pack(pady=(8, 12))
+        tk.Label(
+            card, text="REDES DE COMPUTADORES II", font=("Segoe UI", 8, "bold"),
+            bg=COR_PAINEL, fg=COR_TEXTO_SUAVE,
+        ).pack(pady=(0, 26))
 
         self.var_host = tk.StringVar(value=self._host_prefill or "127.0.0.1")
         self.var_porta = tk.StringVar(value=str(self._porta_prefill) if self._porta_prefill else "5000")
@@ -200,12 +323,13 @@ class ClienteChatGUI:
 
         for entrada in (self.entrada_host, self.entrada_porta, self.entrada_usuario):
             entrada.bind("<Return>", lambda e: self._ao_clicar_conectar())
+        self.entrada_host.focus_set()
 
     def _campo_login(self, parent, rotulo, variavel):
         tk.Label(parent, text=rotulo, font=FONTE_BASE, bg=COR_PAINEL, fg=COR_TEXTO, anchor="w").pack(fill="x")
         entrada = tk.Entry(
-            parent, textvariable=variavel, font=FONTE_BASE, bg=COR_CAMPO, fg="white",
-            insertbackground="white", relief="flat", bd=0,
+            parent, textvariable=variavel, font=FONTE_BASE, bg=COR_CAMPO, fg=COR_TEXTO,
+            insertbackground=COR_TEXTO, relief="flat", bd=0,
         )
         entrada.pack(fill="x", ipady=8, pady=(4, 6))
         tk.Frame(parent, bg=COR_BORDA, height=1).pack(fill="x", pady=(0, 12))
@@ -326,17 +450,23 @@ class ClienteChatGUI:
         self.entrada_mensagem.focus_set()
 
     def _montar_barra_topo(self, host, porta) -> None:
-        topo = tk.Frame(self.frame_chat, bg=COR_PAINEL, height=54)
+        topo = tk.Frame(self.frame_chat, bg=COR_PAINEL, height=58)
         topo.pack(fill="x", side="top")
         topo.pack_propagate(False)
 
-        tk.Label(topo, text=f"💬  {self.usuario}", font=FONTE_TITULO, bg=COR_PAINEL, fg="white").pack(side="left", padx=18)
-        tk.Label(
-            topo, text=f"conectado a {host}:{porta}", font=FONTE_PEQUENA, bg=COR_PAINEL, fg=COR_SUCESSO
-        ).pack(side="right", padx=18)
+        av = _criar_avatar(topo, self.usuario, bg_pai=COR_PAINEL, tamanho=34, destaque=True)
+        av.pack(side="left", padx=(18, 10), pady=12)
+        tk.Label(topo, text=self.usuario, font=FONTE_NOME_TOPO, bg=COR_PAINEL, fg=COR_TEXTO).pack(side="left", pady=12)
+
+        lado_direito = tk.Frame(topo, bg=COR_PAINEL)
+        lado_direito.pack(side="right", padx=18)
+        pontinho = tk.Canvas(lado_direito, width=8, height=8, bg=COR_PAINEL, highlightthickness=0, bd=0)
+        pontinho.create_oval(0, 0, 8, 8, fill=COR_SUCESSO, outline="")
+        pontinho.pack(side="left", padx=(0, 6))
+        tk.Label(lado_direito, text=f"{host}:{porta}", font=FONTE_PEQUENA, bg=COR_PAINEL, fg=COR_TEXTO_SUAVE).pack(side="left")
 
     def _montar_sidebar(self, parent) -> None:
-        painel = tk.Frame(parent, bg=COR_PAINEL, width=310)
+        painel = tk.Frame(parent, bg=COR_PAINEL, width=300)
         painel.pack(side="left", fill="y")
         painel.pack_propagate(False)
 
@@ -355,59 +485,46 @@ class ClienteChatGUI:
         self._montar_aba_salas(self.aba_salas)
         self._montar_aba_privadas(self.aba_privadas)
 
-    def _montar_aba_usuarios(self, aba) -> None:
+    def _cabecalho_aba(self, aba, texto, com_atualizar=None):
         cabecalho = tk.Frame(aba, bg=COR_PAINEL)
-        cabecalho.pack(fill="x", pady=(6, 2))
-        tk.Label(cabecalho, text="SALA ATUAL", font=("Segoe UI", 8, "bold"), bg=COR_PAINEL, fg=COR_TEXTO_SUAVE).pack(side="left")
-        tk.Button(
-            cabecalho, text="↻", font=FONTE_PEQUENA, bg=COR_PAINEL, fg=COR_TEXTO_SUAVE,
-            relief="flat", bd=0, cursor="hand2", command=self._solicitar_lista,
-        ).pack(side="right")
+        cabecalho.pack(fill="x", padx=10, pady=(10, 6))
+        tk.Label(cabecalho, text=texto, font=FONTE_ROTULO_ABA, bg=COR_PAINEL, fg=COR_TEXTO_SUAVE).pack(side="left")
+        if com_atualizar:
+            tk.Button(
+                cabecalho, text="↻", font=FONTE_PEQUENA, bg=COR_PAINEL, fg=COR_TEXTO_SUAVE,
+                relief="flat", bd=0, cursor="hand2", command=com_atualizar,
+            ).pack(side="right")
+        return cabecalho
 
-        self.rotulo_sala_atual = tk.Label(
-            aba, text=self.sala, font=FONTE_SUBTITULO, bg=COR_PAINEL, fg=COR_DESTAQUE, anchor="w"
+    def _montar_aba_usuarios(self, aba) -> None:
+        self._cabecalho_aba(aba, "SALA ATUAL", com_atualizar=self._solicitar_lista)
+        self.rotulo_sala_atual_aba = tk.Label(
+            aba, text=f"# {self.sala}", font=("Georgia", 12, "bold"), bg=COR_PAINEL, fg=COR_DESTAQUE, anchor="w"
         )
-        self.rotulo_sala_atual.pack(fill="x", pady=(0, 8))
-
-        self.lista_usuarios = tk.Listbox(
-            aba, font=FONTE_BASE, bg=COR_PAINEL_2, fg=COR_TEXTO, selectbackground=COR_DESTAQUE,
-            selectforeground="white", relief="flat", bd=0, highlightthickness=0, activestyle="none",
-        )
-        self.lista_usuarios.pack(fill="both", expand=True)
-        self.lista_usuarios.bind("<<ListboxSelect>>", self._ao_selecionar_usuario)
+        self.rotulo_sala_atual_aba.pack(fill="x", padx=12, pady=(0, 8))
 
         tk.Label(
             aba, text="Clique em alguém para abrir uma conversa privada.",
             font=FONTE_PEQUENA, bg=COR_PAINEL, fg=COR_TEXTO_SUAVE, wraplength=230, justify="left", anchor="w",
-        ).pack(fill="x", pady=(6, 4))
+        ).pack(side="bottom", fill="x", padx=12, pady=(6, 10))
+
+        self.lista_usuarios = ListaRolavel(aba, bg=COR_PAINEL)
+        self.lista_usuarios.pack(fill="both", expand=True, padx=8)
 
     def _montar_aba_salas(self, aba) -> None:
-        cabecalho = tk.Frame(aba, bg=COR_PAINEL)
-        cabecalho.pack(fill="x", pady=(6, 6))
-        tk.Label(cabecalho, text="SALAS COM GENTE CONECTADA", font=("Segoe UI", 8, "bold"), bg=COR_PAINEL, fg=COR_TEXTO_SUAVE).pack(side="left")
-        tk.Button(
-            cabecalho, text="↻", font=FONTE_PEQUENA, bg=COR_PAINEL, fg=COR_TEXTO_SUAVE,
-            relief="flat", bd=0, cursor="hand2", command=self._solicitar_lista_salas,
-        ).pack(side="right")
-
-        self.lista_salas = tk.Listbox(
-            aba, font=FONTE_BASE, bg=COR_PAINEL_2, fg=COR_TEXTO, selectbackground=COR_DESTAQUE,
-            selectforeground="white", relief="flat", bd=0, highlightthickness=0, activestyle="none",
-        )
-        self.lista_salas.pack(fill="both", expand=True)
-        self.lista_salas.bind("<<ListboxSelect>>", self._ao_selecionar_sala)
+        self._cabecalho_aba(aba, "SALAS COM GENTE CONECTADA", com_atualizar=self._solicitar_lista_salas)
 
         tk.Label(
-            aba, text="Clique numa sala para entrar nela.", font=FONTE_PEQUENA,
+            aba, text="Nome de sala nova = ela é criada na hora.", font=FONTE_PEQUENA_IT,
             bg=COR_PAINEL, fg=COR_TEXTO_SUAVE, anchor="w",
-        ).pack(fill="x", pady=(6, 8))
+        ).pack(side="bottom", fill="x", padx=12, pady=(0, 10))
 
         linha_nova_sala = tk.Frame(aba, bg=COR_PAINEL)
-        linha_nova_sala.pack(fill="x", pady=(0, 4))
+        linha_nova_sala.pack(side="bottom", fill="x", padx=12, pady=(10, 4))
         self.var_nova_sala = tk.StringVar()
         entrada_nova_sala = tk.Entry(
-            linha_nova_sala, textvariable=self.var_nova_sala, font=FONTE_BASE, bg=COR_CAMPO, fg="white",
-            insertbackground="white", relief="flat", bd=0,
+            linha_nova_sala, textvariable=self.var_nova_sala, font=FONTE_BASE, bg=COR_CAMPO, fg=COR_TEXTO,
+            insertbackground=COR_TEXTO, relief="flat", bd=0,
         )
         entrada_nova_sala.pack(side="left", fill="x", expand=True, ipady=6)
         entrada_nova_sala.bind("<Return>", self._ao_trocar_sala)
@@ -417,97 +534,98 @@ class ClienteChatGUI:
             cursor="hand2", command=self._ao_trocar_sala,
         ).pack(side="left", padx=(6, 0))
 
-        tk.Label(
-            aba, text="Nome de sala nova = ela é criada na hora.", font=FONTE_PEQUENA_IT,
-            bg=COR_PAINEL, fg=COR_TEXTO_SUAVE, anchor="w",
-        ).pack(fill="x")
+        self.lista_salas = ListaRolavel(aba, bg=COR_PAINEL)
+        self.lista_salas.pack(fill="both", expand=True, padx=8)
 
     def _montar_aba_privadas(self, aba) -> None:
-        tk.Label(
-            aba, text="SUAS CONVERSAS PRIVADAS", font=("Segoe UI", 8, "bold"), bg=COR_PAINEL, fg=COR_TEXTO_SUAVE,
-        ).pack(fill="x", pady=(6, 6), anchor="w")
-
-        self.lista_privadas = tk.Listbox(
-            aba, font=FONTE_BASE, bg=COR_PAINEL_2, fg=COR_TEXTO, selectbackground=COR_DESTAQUE,
-            selectforeground="white", relief="flat", bd=0, highlightthickness=0, activestyle="none",
-        )
-        self.lista_privadas.pack(fill="both", expand=True)
-        self.lista_privadas.bind("<<ListboxSelect>>", self._ao_selecionar_privado)
+        self._cabecalho_aba(aba, "SUAS CONVERSAS PRIVADAS")
 
         tk.Label(
             aba, text="Uma conversa aparece aqui assim que você ou a outra pessoa mandarem a primeira mensagem privada.",
             font=FONTE_PEQUENA, bg=COR_PAINEL, fg=COR_TEXTO_SUAVE, wraplength=230, justify="left", anchor="w",
-        ).pack(fill="x", pady=(6, 4))
+        ).pack(side="bottom", fill="x", padx=12, pady=(6, 10))
+
+        self.lista_privadas = ListaRolavel(aba, bg=COR_PAINEL)
+        self.lista_privadas.pack(fill="both", expand=True, padx=8)
+
+    # ---- Área de conversa (direita) -------------------------------------
 
     def _montar_area_conversa(self, parent) -> None:
         area = tk.Frame(parent, bg=COR_FUNDO)
         area.pack(side="left", fill="both", expand=True)
 
-        cabecalho = tk.Frame(area, bg=COR_FUNDO)
-        cabecalho.pack(fill="x")
+        barra_nav = tk.Frame(area, bg=COR_FUNDO)
+        barra_nav.pack(fill="x")
 
-        self.rotulo_cabecalho = tk.Label(
-            cabecalho, text="", font=FONTE_NEGRITO, bg=COR_FUNDO, fg=COR_DESTAQUE, anchor="w", padx=16, pady=8,
+        self.chip_sala = tk.Label(
+            barra_nav, text=f"# {self.sala}", font=FONTE_NOME_CHIP, padx=14, pady=6, cursor="hand2",
         )
-        self.rotulo_cabecalho.pack(side="left", fill="x", expand=True)
+        self.chip_sala.pack(side="left", padx=(18, 0), pady=12)
+        self.chip_sala.bind("<Button-1>", lambda e: self._voltar_para_sala())
 
-        self.botao_voltar = tk.Button(
-            cabecalho, text="← Voltar para a sala", font=FONTE_PEQUENA, bg=COR_FUNDO, fg=COR_TEXTO_SUAVE,
-            relief="flat", bd=0, cursor="hand2", command=self._voltar_para_sala,
-        )
+        self.separador_nav = tk.Label(barra_nav, text="›", font=("Segoe UI", 12), bg=COR_FUNDO, fg=COR_TEXTO_SUAVE)
+        self.chip_privada = tk.Label(barra_nav, text="", font=FONTE_NOME_CHIP, padx=14, pady=6)
 
         self.rotulo_digitando = tk.Label(
-            area, text="", font=FONTE_PEQUENA_IT, bg=COR_FUNDO, fg=COR_TEXTO_SUAVE, anchor="w", padx=16,
+            area, text="", font=FONTE_PEQUENA_IT, bg=COR_FUNDO, fg=COR_TEXTO_SUAVE, anchor="w", padx=18,
         )
         self.rotulo_digitando.pack(fill="x")
 
-        frame_mensagens = tk.Frame(area, bg=COR_CHAT_FUNDO)
-        frame_mensagens.pack(fill="both", expand=True)
-
-        self.texto_chat = tk.Text(
-            frame_mensagens, font=FONTE_MENSAGEM, bg=COR_CHAT_FUNDO, fg=COR_BOLHA_TXT,
-            relief="flat", bd=0, wrap="word", state="disabled", padx=16, pady=12, spacing3=6,
-        )
-        scroll = ttk.Scrollbar(frame_mensagens, command=self.texto_chat.yview)
-        self.texto_chat.configure(yscrollcommand=scroll.set)
-        self.texto_chat.pack(side="left", fill="both", expand=True)
-        scroll.pack(side="right", fill="y")
-        self._configurar_tags_texto()
-
+        # IMPORTANTE: o rodapé (caixa de mensagem) é empacotado ANTES da
+        # área de texto que se expande (fill="both", expand=True). Um
+        # widget com expand=True reivindica toda a área ainda livre no
+        # momento em que é empacotado -- se ele for empacotado primeiro,
+        # não sobra espaço reservado para quem vem depois, mesmo usando
+        # side="bottom". Empacotar o rodapé primeiro garante que o espaço
+        # dele já fique reservado, e a área de texto simplesmente preenche
+        # o que sobrar -- assim a caixa de mensagem nunca fica escondida
+        # abaixo da borda da janela, mesmo em telas pequenas.
         rodape = tk.Frame(area, bg=COR_PAINEL, height=64)
         rodape.pack(fill="x", side="bottom")
         rodape.pack_propagate(False)
 
         self.var_mensagem = tk.StringVar()
         self.entrada_mensagem = tk.Entry(
-            rodape, textvariable=self.var_mensagem, font=FONTE_BASE, bg=COR_CAMPO, fg="white",
-            insertbackground="white", relief="flat", bd=0,
+            rodape, textvariable=self.var_mensagem, font=FONTE_BASE, bg=COR_CAMPO, fg=COR_TEXTO,
+            insertbackground=COR_TEXTO, relief="flat", bd=0,
         )
         self.entrada_mensagem.pack(side="left", fill="both", expand=True, padx=(16, 8), pady=14, ipady=6)
         self.entrada_mensagem.bind("<Return>", self._enviar)
         self.entrada_mensagem.bind("<KeyRelease>", self._ao_digitar)
 
         tk.Button(
-            rodape, text="Enviar ➤", font=FONTE_NEGRITO, bg=COR_DESTAQUE, fg="white",
+            rodape, text="Enviar", font=FONTE_NEGRITO, bg=COR_DESTAQUE, fg="white",
             activebackground=COR_DESTAQUE_HOVER, activeforeground="white", relief="flat", bd=0,
             cursor="hand2", command=self._enviar, padx=18,
         ).pack(side="right", padx=(0, 10), pady=14)
 
         tk.Button(
-            rodape, text="Sair", font=FONTE_NEGRITO, bg="#3f2937", fg="#fca5a5",
-            activebackground="#552a37", activeforeground="#fca5a5", relief="flat", bd=0,
+            rodape, text="Sair", font=FONTE_NEGRITO, bg=COR_SAIR_BG, fg=COR_SAIR_FG,
+            activebackground=COR_SAIR_BG_HOVER, activeforeground=COR_SAIR_FG, relief="flat", bd=0,
             cursor="hand2", command=self._sair, padx=14,
         ).pack(side="right", padx=(0, 4), pady=14)
 
+        frame_mensagens = tk.Frame(area, bg=COR_CHAT_FUNDO)
+        frame_mensagens.pack(fill="both", expand=True)
+
+        self.texto_chat = tk.Text(
+            frame_mensagens, font=FONTE_MENSAGEM, bg=COR_CHAT_FUNDO, fg=COR_BOLHA_TXT,
+            relief="flat", bd=0, wrap="word", state="disabled", padx=18, pady=14, spacing3=6,
+        )
+        scroll = ttk.Scrollbar(frame_mensagens, command=self.texto_chat.yview, style="Chat.Vertical.TScrollbar")
+        self.texto_chat.configure(yscrollcommand=scroll.set)
+        self.texto_chat.pack(side="left", fill="both", expand=True)
+        scroll.pack(side="right", fill="y")
+        self._configurar_tags_texto()
+
     def _configurar_tags_texto(self) -> None:
         t = self.texto_chat
-        t.tag_configure("propria_nome", justify="right", foreground=COR_DESTAQUE, font=FONTE_NEGRITO, spacing1=8)
+        t.tag_configure("propria_nome", justify="right", foreground=COR_DESTAQUE, font=FONTE_NEGRITO, spacing1=10)
         t.tag_configure("propria_texto", justify="right", foreground=COR_BOLHA_TXT, font=FONTE_MENSAGEM)
-        t.tag_configure("outro_nome", justify="left", foreground="#334155", font=FONTE_NEGRITO, spacing1=8)
+        t.tag_configure("outro_nome", justify="left", foreground="#57503f", font=FONTE_NEGRITO, spacing1=10)
         t.tag_configure("outro_texto", justify="left", foreground=COR_BOLHA_TXT, font=FONTE_MENSAGEM)
-        t.tag_configure("propria_privada_nome", justify="right", foreground=COR_PRIVADA, font=FONTE_NEGRITO, spacing1=8)
-        t.tag_configure("outro_privada_nome", justify="left", foreground=COR_PRIVADA, font=FONTE_NEGRITO, spacing1=8)
-        t.tag_configure("sistema", justify="center", foreground="#94a3b8", font=("Segoe UI", 9, "italic"), spacing1=6)
+        t.tag_configure("outro_privada_nome", justify="left", foreground=COR_PRIVADA, font=FONTE_NEGRITO, spacing1=10)
+        t.tag_configure("sistema", justify="center", foreground="#8a8371", font=("Segoe UI", 9, "italic"), spacing1=6)
         t.tag_configure("erro", justify="center", foreground=COR_ERRO, font=("Segoe UI", 9, "italic"), spacing1=6)
 
     # ====================================================================
@@ -555,7 +673,7 @@ class ClienteChatGUI:
             if self.conversa_atual != conversa_id:
                 self._incrementar_nao_lidas(de)
                 self._mostrar_toast(
-                    f"📩  Nova mensagem privada de {de}",
+                    f"Nova mensagem de {de}", avatar_nome=de, cor=COR_PRIVADA,
                     ao_clicar=lambda nm=de: self._ao_clicar_toast_privada(nm),
                 )
 
@@ -581,7 +699,7 @@ class ClienteChatGUI:
             self._ao_entrar_sala(mensagem.get("sala", self.sala))
 
         elif tipo == "SALA_ERRO":
-            self._mostrar_toast(f"⚠️  {mensagem.get('motivo')}", cor=COR_ERRO)
+            self._mostrar_toast(mensagem.get("motivo", "Não foi possível trocar de sala."), cor=COR_ERRO)
 
         elif tipo == "HISTORICO":
             self._processar_historico(mensagem.get("sala"), mensagem.get("mensagens", []))
@@ -657,14 +775,7 @@ class ClienteChatGUI:
         except OSError:
             pass
 
-    def _ao_selecionar_sala(self, evento=None) -> None:
-        selecao = self.lista_salas.curselection()
-        if not selecao:
-            return
-        idx = selecao[0]
-        if idx >= len(self._cache_salas):
-            return
-        nome = self._cache_salas[idx]["nome"]
+    def _ao_clicar_sala(self, nome: str) -> None:
         if nome != self.sala:
             try:
                 protocolo.enviar(self.sock, {"tipo": "ENTRAR_SALA", "sala": nome})
@@ -676,12 +787,14 @@ class ClienteChatGUI:
         estava_vendo_sala = self.conversa_atual == ("sala", sala_antiga)
         self.sala = sala
         self.var_nova_sala.set("")
-        self.rotulo_sala_atual.config(text=sala)
+        self.rotulo_sala_atual_aba.config(text=f"# {sala}")
 
         self._linha(("sala", sala), f"Você entrou na sala '{sala}'.", "sistema")
 
         if estava_vendo_sala or sala_antiga == sala:
             self._selecionar_conversa(("sala", sala))
+        else:
+            self.chip_sala.config(text=f"# {self.sala}")
 
         self._solicitar_lista()
         self._solicitar_lista_salas()
@@ -690,36 +803,49 @@ class ClienteChatGUI:
         self._selecionar_conversa(("sala", self.sala))
 
     # ====================================================================
-    # Lista de usuários da sala / seleção de conversa privada
+    # Lista de usuários da sala / lista de salas / lista de privadas
+    # (listas customizadas com avatar, não Listbox nativo)
     # ====================================================================
 
     def _atualizar_lista_usuarios(self, usuarios: list) -> None:
-        self._cache_usuarios = sorted(nome for nome in usuarios if nome != self.usuario)
-        self.lista_usuarios.delete(0, "end")
-        for nome in self._cache_usuarios:
-            self.lista_usuarios.insert("end", f"●  {nome}")
+        self.lista_usuarios.limpar()
+        nomes = sorted(nome for nome in usuarios if nome != self.usuario)
+        pai = self.lista_usuarios.frame_interno
+        for nome in nomes:
+            linha = tk.Frame(pai, bg=COR_PAINEL)
+            av = _criar_avatar(linha, nome, bg_pai=COR_PAINEL, tamanho=28)
+            av.pack(side="left", padx=(8, 8), pady=7)
+            lbl = tk.Label(linha, text=nome, font=FONTE_BASE, bg=COR_PAINEL, fg=COR_TEXTO, anchor="w")
+            lbl.pack(side="left", fill="x", expand=True, pady=7)
+            linha.pack(fill="x")
+            _tornar_clicavel([linha, av, lbl], lambda nm=nome: self._ao_clicar_usuario(nm), COR_PAINEL, COR_PAINEL_2)
 
-    def _ao_selecionar_usuario(self, evento=None) -> None:
-        selecao = self.lista_usuarios.curselection()
-        if not selecao:
-            return
-        idx = selecao[0]
-        if idx >= len(self._cache_usuarios):
-            return
-        nome = self._cache_usuarios[idx]
+    def _ao_clicar_usuario(self, nome: str) -> None:
         self._registrar_contato_privado(nome)
         self._selecionar_conversa(("privada", nome))
         self.notebook.select(self.aba_privadas)
 
     def _atualizar_lista_salas(self, salas: list) -> None:
-        self._cache_salas = salas
-        self.lista_salas.delete(0, "end")
-        for i, s in enumerate(salas):
-            marcador = "●  " if s["nome"] == self.sala else "○  "
-            rotulo = f"{marcador}{s['nome']}   ({s['usuarios']})"
-            self.lista_salas.insert("end", rotulo)
-            if s["nome"] == self.sala:
-                self.lista_salas.itemconfig(i, fg=COR_DESTAQUE)
+        self.lista_salas.limpar()
+        pai = self.lista_salas.frame_interno
+        for s in salas:
+            nome, n = s["nome"], s["usuarios"]
+            ativa = nome == self.sala
+            linha = tk.Frame(pai, bg=COR_PAINEL)
+            marca = tk.Label(
+                linha, text="#", font=("Georgia", 13, "bold"), bg=COR_PAINEL,
+                fg=(COR_DESTAQUE if ativa else COR_TEXTO_SUAVE), width=2,
+            )
+            marca.pack(side="left", padx=(8, 0), pady=7)
+            lbl = tk.Label(
+                linha, text=nome, font=(FONTE_NEGRITO if ativa else FONTE_BASE), bg=COR_PAINEL,
+                fg=(COR_DESTAQUE if ativa else COR_TEXTO), anchor="w",
+            )
+            lbl.pack(side="left", fill="x", expand=True, pady=7)
+            badge = tk.Label(linha, text=str(n), font=FONTE_PEQUENA, bg=COR_PAINEL_2, fg=COR_TEXTO_SUAVE, padx=6)
+            badge.pack(side="right", padx=(0, 8))
+            linha.pack(fill="x")
+            _tornar_clicavel([linha, marca, lbl], lambda nm=nome: self._ao_clicar_sala(nm), COR_PAINEL, COR_PAINEL_2)
 
     # ====================================================================
     # Conversas privadas: registro de contatos, não lidas, seleção
@@ -756,21 +882,27 @@ class ClienteChatGUI:
         self.notebook.tab(self.aba_privadas, text=texto)
 
     def _atualizar_lista_privados_widget(self) -> None:
-        self.lista_privadas.delete(0, "end")
-        for i, nome in enumerate(self.ordem_privados):
+        self.lista_privadas.limpar()
+        pai = self.lista_privadas.frame_interno
+        for nome in self.ordem_privados:
             n = self.contatos_privados.get(nome, 0)
-            rotulo = f"🔒 {nome}" + (f"   ● {n}" if n > 0 else "")
-            self.lista_privadas.insert("end", rotulo)
-            self.lista_privadas.itemconfig(i, fg=(COR_PRIVADA if n > 0 else COR_TEXTO))
+            linha = tk.Frame(pai, bg=COR_PAINEL)
+            av = _criar_avatar(linha, nome, bg_pai=COR_PAINEL, tamanho=28)
+            av.pack(side="left", padx=(8, 8), pady=7)
+            lbl = tk.Label(
+                linha, text=nome, font=(FONTE_NEGRITO if n > 0 else FONTE_BASE), bg=COR_PAINEL,
+                fg=(COR_PRIVADA if n > 0 else COR_TEXTO), anchor="w",
+            )
+            lbl.pack(side="left", fill="x", expand=True, pady=7)
+            widgets_linha = [linha, av, lbl]
+            if n > 0:
+                badge = tk.Label(linha, text=str(n), font=("Segoe UI", 8, "bold"), bg=COR_PRIVADA, fg="white", padx=6, pady=1)
+                badge.pack(side="right", padx=(0, 8))
+                widgets_linha.append(badge)
+            linha.pack(fill="x")
+            _tornar_clicavel(widgets_linha, lambda nm=nome: self._ao_clicar_privado(nm), COR_PAINEL, COR_PAINEL_2)
 
-    def _ao_selecionar_privado(self, evento=None) -> None:
-        selecao = self.lista_privadas.curselection()
-        if not selecao:
-            return
-        idx = selecao[0]
-        if idx >= len(self.ordem_privados):
-            return
-        nome = self.ordem_privados[idx]
+    def _ao_clicar_privado(self, nome: str) -> None:
         self._selecionar_conversa(("privada", nome))
 
     def _ao_clicar_toast_privada(self, nome: str) -> None:
@@ -784,13 +916,18 @@ class ClienteChatGUI:
 
     def _selecionar_conversa(self, conversa_id) -> None:
         self.conversa_atual = conversa_id
+        self.chip_sala.config(text=f"# {self.sala}")
+
         if conversa_id[0] == "sala":
-            self.rotulo_cabecalho.config(text=f"💬  Sala: {conversa_id[1]}", fg=COR_DESTAQUE)
-            self.botao_voltar.pack_forget()
+            self.chip_sala.config(bg=COR_DESTAQUE, fg="white")
+            self.separador_nav.pack_forget()
+            self.chip_privada.pack_forget()
         else:
             nome = conversa_id[1]
-            self.rotulo_cabecalho.config(text=f"🔒  Conversa privada com {nome}", fg=COR_PRIVADA)
-            self.botao_voltar.pack(side="right")
+            self.chip_sala.config(bg=COR_FUNDO, fg=COR_DESTAQUE)
+            self.chip_privada.config(text=nome, bg=COR_PRIVADA, fg="white")
+            self.separador_nav.pack(side="left", pady=12)
+            self.chip_privada.pack(side="left", pady=12)
             self._marcar_como_lida(nome)
 
         self._renderizar_conversa(conversa_id)
@@ -824,8 +961,7 @@ class ClienteChatGUI:
         t = self.texto_chat
         t.config(state="normal")
         if propria:
-            tag_nome = "propria_privada_nome" if privada else "propria_nome"
-            t.insert("end", f"Você · {hora}\n", tag_nome)
+            t.insert("end", f"Você · {hora}\n", "propria_nome")
             t.insert("end", f"{texto}\n\n", "propria_texto")
         else:
             tag_nome = "outro_privada_nome" if privada else "outro_nome"
@@ -910,16 +1046,28 @@ class ClienteChatGUI:
     # Notificações (toast)
     # ====================================================================
 
-    def _mostrar_toast(self, texto: str, ao_clicar=None, cor=None) -> None:
+    def _mostrar_toast(self, texto: str, ao_clicar=None, cor=None, avatar_nome=None) -> None:
         cor = cor or COR_DESTAQUE
         cursor = "hand2" if ao_clicar else "arrow"
 
-        toast = tk.Frame(self.container, bg=cor, cursor=cursor)
+        toast = tk.Frame(self.container, bg=COR_PAINEL, highlightbackground=cor, highlightthickness=1, cursor=cursor)
+        barra = tk.Frame(toast, bg=cor, width=4)
+        barra.pack(side="left", fill="y")
+        conteudo = tk.Frame(toast, bg=COR_PAINEL, cursor=cursor)
+        conteudo.pack(side="left", fill="both", expand=True)
+
+        widgets = [toast, barra, conteudo]
+        if avatar_nome:
+            av = _criar_avatar(conteudo, avatar_nome, bg_pai=COR_PAINEL, tamanho=26)
+            av.pack(side="left", padx=(10, 8), pady=10)
+            widgets.append(av)
         rotulo = tk.Label(
-            toast, text=texto, bg=cor, fg="white", font=FONTE_NEGRITO,
-            padx=16, pady=12, wraplength=260, justify="left", cursor=cursor,
+            conteudo, text=texto, bg=COR_PAINEL, fg=COR_TEXTO, font=FONTE_BASE,
+            padx=(0 if avatar_nome else 14), pady=10, wraplength=230, justify="left", cursor=cursor,
         )
-        rotulo.pack()
+        rotulo.pack(side="left", fill="both", expand=True, padx=(0, 12))
+        widgets.append(rotulo)
+
         self._toasts_ativos.append(toast)
         self._reempilhar_toasts()
 
@@ -934,15 +1082,15 @@ class ClienteChatGUI:
             def _ao_clique(_evento):
                 ao_clicar()
                 _remover()
-            rotulo.bind("<Button-1>", _ao_clique)
-            toast.bind("<Button-1>", _ao_clique)
+            for w in widgets:
+                w.bind("<Button-1>", _ao_clique)
 
         toast.after(4200, _remover)
 
     def _reempilhar_toasts(self) -> None:
         for i, toast in enumerate(self._toasts_ativos):
             if toast.winfo_exists():
-                toast.place(in_=self.container, relx=1.0, rely=1.0, anchor="se", x=-18, y=-18 - (64 * i))
+                toast.place(in_=self.container, relx=1.0, rely=1.0, anchor="se", x=-18, y=-18 - (60 * i))
 
     # ====================================================================
     # Encerramento / reconexão
