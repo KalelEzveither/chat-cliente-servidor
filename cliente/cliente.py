@@ -189,6 +189,8 @@ class ClienteChat:
             print(f"\n[ERRO] {mensagem.get('mensagem')}\n{self._prompt()}", end="", flush=True)
         elif tipo == "SISTEMA":
             print(f"\n[SISTEMA] {mensagem.get('mensagem')}\n{self._prompt()}", end="", flush=True)
+        elif tipo == "DIGITANDO":
+            pass  # sem indicador de digitacao no cliente de texto; ignorado silenciosamente
         else:
             print(f"\n[DESCONHECIDO] {mensagem}\n{self._prompt()}", end="", flush=True)
 

@@ -69,6 +69,16 @@ LISTAR_SALAS {"tipo": "LISTAR_SALAS"}
     usuario conectado, e quantos usuarios ha em cada uma (comando /salas
     no cliente).
 
+DIGITANDO   {"tipo": "DIGITANDO", "destino": "<usuario>" (OPCIONAL)}
+    Avisa que o remetente esta digitando uma mensagem agora. Se "destino"
+    estiver presente, e um aviso de digitacao PRIVADA (encaminhado so para
+    aquele usuario); se ausente, e um aviso de digitacao na SALA atual
+    (encaminhado a todos os demais membros dela). Efemero: nao e
+    persistido no banco de dados nem logado pelo servidor. O cliente deve
+    reenviar essa mensagem periodicamente enquanto o usuario continua
+    digitando (o lado receptor expira o indicador sozinho apos alguns
+    segundos sem receber um novo aviso).
+
 SAIR         {"tipo": "SAIR"}
     Informa ao servidor que o cliente deseja encerrar a conexao de forma
     controlada (comando /sair no cliente).
@@ -134,6 +144,11 @@ ENTROU       {"tipo": "ENTROU", "usuario": "<nome>", "sala": "<nome>"}
 SAIU         {"tipo": "SAIU", "usuario": "<nome>", "sala": "<nome>"}
     Notificacao, para os demais membros da sala, de que um usuario saiu
     dela (broadcast automatico ao trocar de sala ou ao desconectar).
+
+DIGITANDO   {"tipo": "DIGITANDO", "de": "<usuario>", "sala": "<nome>" (SO NA SALA)}
+    Repasse do aviso de digitacao. Sem "sala": aviso PRIVADO (o usuario
+    "de" esta digitando uma mensagem para o destinatario deste envio).
+    Com "sala": aviso de digitacao no chat geral daquela sala.
 
 ERRO         {"tipo": "ERRO", "mensagem": "<descricao>"}
     Erro generico (ex.: destinatario de mensagem privada nao encontrado,

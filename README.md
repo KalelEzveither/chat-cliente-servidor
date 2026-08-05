@@ -174,30 +174,43 @@ cd chat_project
 python3 cliente/cliente_gui.py
 ```
 
-Uma janela abre com campos para IP, porta e apelido (sem senha), e um botão
-**Entrar** — o login só é recusado se o apelido já estiver em uso por uma
-sessão ativa no momento (o IP também nunca é fixo no código aqui). Depois
-de conectado:
+Uma tela de login pede IP, porta e apelido (sem senha) — o login só é
+recusado se o apelido já estiver em uso por uma sessão ativa no momento (o
+IP também nunca é fixo no código aqui). Depois de conectar, a janela
+principal tem um painel lateral com três abas:
 
-- Digite no campo de texto e clique **Enviar** (ou tecle Enter) para mandar
-  mensagem na sala atual;
-- Clique em um usuário na lista à direita para mudar o destino da próxima
-  mensagem para **privado** (o rótulo "Enviando para: ..." mostra o modo
-  atual); clique em "🌐 Sala atual (broadcast)" para voltar ao modo broadcast;
-- No campo **"Sala atual"**, digite o nome de outra sala e clique
-  **Trocar** (ou tecle Enter) para mudar de canal — a sala é criada na hora
-  se ainda não existir. O botão **"Ver salas ativas"** mostra no chat quais
-  salas têm gente conectada agora;
-- O botão **↻** atualiza manualmente a lista de usuários da sala atual (a
-  lista também se atualiza sozinha quando alguém entra ou sai dela);
+- **Usuários** — quem está na sala atual. Clicar em alguém abre uma
+  **conversa privada** com essa pessoa (a tela troca automaticamente para
+  a aba "Privadas");
+- **Salas ativas** — todas as salas que têm gente conectada agora, com a
+  contagem de usuários; clique em uma para entrar nela. Um campo embaixo
+  permite digitar o nome de uma sala nova (ela é criada na hora, como no
+  `/entrar` do cliente de texto);
+- **Privadas** — a lista das conversas privadas já iniciadas, com um
+  indicador (●  N) de quantas mensagens não lidas há em cada uma.
+
+Cada conversa — a sala atual e cada contato privado — tem sua **própria
+linha do tempo**: o histórico de uma conversa privada nunca aparece
+misturado no chat geral, e vice-versa; trocar de aba só troca o que está
+sendo exibido.
+
+Outros detalhes da interface:
+
+- Enquanto a outra pessoa está digitando (na sala ou numa privada), aparece
+  um aviso **"fulano está digitando..."** logo abaixo do cabeçalho da
+  conversa aberta;
+- Ao chegar uma mensagem privada de uma conversa que não é a que está
+  aberta no momento, aparece uma **notificação** no canto da tela — clicar
+  nela abre direto aquela conversa — além do contador de não lidas na aba
+  "Privadas";
+- Logo após entrar (ou trocar de sala), o histórico de mensagens perdidas
+  daquela sala, e o histórico geral de conversas privadas, são recarregados
+  automaticamente, cada um na conversa certa;
 - O botão **Sair** (ou fechar a janela) encerra a conexão de forma
-  controlada, enviando o comando `SAIR` ao servidor;
-- Logo após entrar, o histórico de mensagens anteriores (se houver)
-  aparece automaticamente no chat, em um tom mais claro, para diferenciar
-  do que está acontecendo ao vivo.
+  controlada, enviando o comando `SAIR` ao servidor.
 
-Você também pode pré-preencher os campos por linha de comando (a conexão
-ainda assim só é feita ao clicar em "Entrar"):
+Você também pode pré-preencher os campos de login por linha de comando (a
+conexão ainda assim só é feita ao clicar em "Entrar"):
 
 ```bash
 python3 cliente/cliente_gui.py --host 192.168.0.10 --porta 5000 --usuario alice

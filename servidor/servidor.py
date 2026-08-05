@@ -283,6 +283,13 @@ class ServidorChat:
         elif tipo == "LISTAR_SALAS":
             self._enviar_lista_salas(cliente)
 
+        elif tipo == "DIGITANDO":
+            destino = mensagem.get("destino")
+            if destino:
+                self._notificar_digitando_privado(cliente, str(destino))
+            else:
+                self._notificar_digitando_sala(cliente)
+
         elif tipo == "SAIR":
             cliente.ativo = False
 
@@ -291,6 +298,31 @@ class ServidorChat:
                 cliente.sock,
                 {"tipo": "ERRO", "mensagem": f"Tipo de mensagem desconhecido: '{tipo}'."},
             )
+
+    def _notificar_digitando_privado(self, cliente: ClienteConectado, destino: str) -> None:
+        """Repassa o aviso de 'digitando' apenas ao destinatario da privada.
+        Efemero: se o destinatario nao existir mais (ja desconectou), o
+        aviso e simplesmente descartado, sem gerar ERRO (nao vale a pena
+        incomodar quem esta digitando por causa de um aviso de baixa
+        importancia como esse)."""
+        with self.trava:
+            alvo = self.clientes.get(destino)
+        if alvo is None:
+            return
+        try:
+            protocolo.enviar(alvo.sock, {"tipo": "DIGITANDO", "de": cliente.usuario})
+        except OSError:
+            pass
+
+    def _notificar_digitando_sala(self, cliente: ClienteConectado) -> None:
+        """Repassa o aviso de 'digitando' aos demais membros da sala atual."""
+        with self.trava:
+            destinatarios = [
+                c for nome, c in self.clientes.items()
+                if nome != cliente.usuario and c.sala == cliente.sala
+            ]
+        payload = {"tipo": "DIGITANDO", "de": cliente.usuario, "sala": cliente.sala}
+        self._enviar_para_varios(destinatarios, payload)
 
     def _broadcast(self, cliente: ClienteConectado, texto: str) -> None:
         # O CONTEUDO da mensagem nao e logado no servidor (privacidade): o
