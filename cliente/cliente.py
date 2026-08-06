@@ -1,39 +1,13 @@
-# -*- coding: utf-8 -*-
-"""
-cliente/cliente.py
-
-Cliente de chat cliente-servidor (Trabalho Pratico - Redes de Computadores 2).
-
-Responsabilidades do cliente:
-  - Conectar-se ao servidor em um IP/porta configuraveis (nunca fixos em
-    localhost/127.0.0.1 no codigo, conforme exigido pelo trabalho);
-  - Identificar-se por um apelido unico ao entrar no chat (sem senha nem
-    conta -- so falha se o apelido ja estiver em uso no momento);
-  - Exibir o historico de mensagens anteriores enviado pelo servidor logo
-    apos o login;
-  - Enviar mensagens de broadcast (sala atual) e mensagens privadas;
-  - Listar usuarios conectados na sala atual, e trocar de sala/canal;
-  - Receber mensagens de outros usuarios em tempo real, em uma thread
-    separada da thread que le a entrada do teclado (para nao bloquear a
-    recepcao enquanto o usuario digita);
-  - Encerrar a conexao de forma controlada.
-
-Uso:
-    python3 cliente.py --host <IP_DO_SERVIDOR> --porta <PORTA>
-
-    Se --host/--porta nao forem passados, o cliente pergunta interativamente
-    (nunca assume localhost por padrao), atendendo ao requisito de que o IP
-    do servidor deve ser configuravel no dia do teste em laboratorio.
-
-Comandos disponiveis apos conectar:
-    <texto>                       envia mensagem para a sala atual (broadcast)
-    /msg <usuario> <mensagem>     envia mensagem privada para um usuario
-    /lista                        lista os usuarios conectados na sala atual
-    /entrar <sala>                troca para outra sala/canal (cria se nao existir)
-    /salas                        lista as salas ativas no momento
-    /sair                         encerra a conexao de forma controlada
-    /ajuda                        mostra novamente os comandos disponiveis
-"""
+# cliente de chat em modo texto. uso: python3 cliente.py --host <ip> --porta <porta>
+#
+# comandos:
+#   <texto>                    manda pra sala atual
+#   /msg <usuario> <msg>       manda privada
+#   /lista                     usuarios da sala atual
+#   /entrar <sala>             troca de sala (cria se nao existir)
+#   /salas                     lista salas ativas
+#   /sair                      encerra
+#   /ajuda                     mostra os comandos de novo
 
 import argparse
 import os
@@ -41,8 +15,6 @@ import socket
 import sys
 import threading
 
-# Garante que a pasta raiz do projeto (que contem o pacote `comum`) esteja no
-# path, independente de onde o script for executado.
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from comum import protocolo
 
@@ -121,19 +93,12 @@ class ClienteChat:
                 self.sock.close()
             except OSError:
                 pass
-            # Espera a thread de recepcao perceber o socket fechado e
-            # encerrar sozinha, antes do processo principal terminar. Sem
-            # isso, a thread (daemon) pode ainda estar no meio de um print()
-            # exatamente quando o interpretador comeca a finalizar, o que
-            # produz o erro fatal "_enter_buffered_busy" no encerramento.
+            # espera a thread de recepcao perceber o socket fechado antes
+            # do processo terminar, senao da erro no encerramento
             thread_recepcao.join(timeout=1)
 
-    # ------------------------------------------------------------------ #
-    # Thread de recepcao: fica bloqueada em recv() esperando mensagens do
-    # servidor, independente do que o usuario esta digitando.
-    # ------------------------------------------------------------------ #
-
     def _loop_recepcao(self) -> None:
+        # roda numa thread separada, so recebendo e imprimindo
         erro_rede = None
         while self.rodando.is_set():
             try:
@@ -190,14 +155,14 @@ class ClienteChat:
         elif tipo == "SISTEMA":
             print(f"\n[SISTEMA] {mensagem.get('mensagem')}\n{self._prompt()}", end="", flush=True)
         elif tipo == "DIGITANDO":
-            pass  # sem indicador de digitacao no cliente de texto; ignorado silenciosamente
+            pass  # sem indicador no cliente de texto
         else:
             print(f"\n[DESCONHECIDO] {mensagem}\n{self._prompt()}", end="", flush=True)
 
     def _prompt(self) -> str:
         return f"[{self.sala}]> "
 
-    def _exibir_historico(self, mensagens: list, sala: str | None) -> None:
+    def _exibir_historico(self, mensagens: list, sala: "str | None") -> None:
         if not mensagens:
             return
         titulo = f"Mensagens que você perdeu na sala '{sala}'" if sala else "Histórico de mensagens privadas"
@@ -210,11 +175,8 @@ class ClienteChat:
                 print(f"[{quando}] {item.get('de')}: {item.get('texto')}")
         print(f"----- Fim do histórico -----\n{self._prompt()}", end="", flush=True)
 
-    # ------------------------------------------------------------------ #
-    # Thread principal: le comandos do teclado e envia ao servidor.
-    # ------------------------------------------------------------------ #
-
     def _loop_envio(self) -> None:
+        # roda na thread principal, e o input() que bloqueia aqui
         while self.rodando.is_set():
             try:
                 entrada = input(self._prompt())
@@ -253,9 +215,7 @@ class ClienteChat:
                     break
 
     def _enviar_seguro(self, mensagem: dict) -> bool:
-        """Envia uma mensagem tratando a possibilidade de a conexao ja ter
-        caido (ex.: servidor encerrado); retorna False nesse caso, para o
-        chamador poder parar o loop de envio em vez de continuar tentando."""
+        # se a conexao ja caiu, para o loop em vez de continuar tentando
         try:
             protocolo.enviar(self.sock, mensagem)
             return True
@@ -265,8 +225,7 @@ class ClienteChat:
             return False
 
     def _enviar_privada(self, entrada: str) -> bool:
-        # formato: /msg <usuario> <mensagem...>
-        partes = entrada.split(" ", 2)
+        partes = entrada.split(" ", 2)  # /msg <usuario> <texto...>
         if len(partes) < 3:
             print("[CLIENTE] Uso correto: /msg <usuario> <mensagem>")
             return True

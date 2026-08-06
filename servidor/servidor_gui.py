@@ -1,38 +1,5 @@
-# -*- coding: utf-8 -*-
-"""
-servidor/servidor_gui.py
-
-Interface grafica (Tkinter) para operar o servidor de chat, como alternativa
-a rodar `servidor.py` diretamente pela linha de comando.
-
-Esta GUI NAO reimplementa a logica de rede: ela apenas inicia e supervisiona
-`servidor.py` como um subprocesso (com os parametros escolhidos na tela) e
-exibe, em uma janela, o mesmo log que apareceria no terminal. Isso garante
-que o comportamento de rede seja identico ao do servidor em modo texto --
-so muda a forma de operar (host/porta/banco por formulario, iniciar/parar
-por botao, log em uma janela em vez do terminal).
-
-O visual (cores, fontes, marca "Fala Daí") vem de `comum/estilo.py`,
-compartilhado com o cliente gráfico e o launcher, para que as três janelas
-do app tenham a mesma identidade visual.
-
-Privacidade: o servidor (servidor.py) so registra QUE uma mensagem foi
-enviada, por quem e em qual sala/destinatario -- nunca o conteudo da
-mensagem em si. O texto das conversas so aparece na tela dos clientes
-(cliente.py / cliente_gui.py), nunca aqui.
-
-Uso:
-    python3 servidor_gui.py
-
-Arquitetura:
-    - Thread principal: roda o loop de eventos do Tkinter.
-    - Thread de leitura de log: fica bloqueada lendo a saida (stdout) do
-      subprocesso do servidor, linha a linha, e empilha cada linha numa fila
-      (queue.Queue) -- nunca mexe em widgets diretamente.
-    - A thread principal consome essa fila periodicamente (root.after) e so
-      ai atualiza o widget de log, respeitando a regra do Tkinter de que
-      apenas a thread principal pode tocar nos widgets.
-"""
+# painel grafico do servidor. nao reimplementa rede: so liga/desliga
+# servidor.py como subprocesso e mostra o log dele numa janela
 
 import os
 import queue
@@ -58,25 +25,20 @@ PASTA_PROJETO = os.path.dirname(PASTA_SERVIDOR)
 
 
 class ServidorGUI:
-    """Janela principal: formulario de configuracao + botoes iniciar/parar
-    + painel de log em tempo real do servidor."""
+    # formulario de config + botoes iniciar/parar + log em tempo real
 
     def __init__(self, root: tk.Tk):
         self.root = root
         aplicar_janela_base(self.root)
         geometria_ajustada_a_tela(self.root, largura_alvo=820, altura_alvo=580, largura_min=560, altura_min=380)
 
-        self.processo: subprocess.Popen | None = None
+        self.processo: "subprocess.Popen | None" = None
         self.rodando = False
         self.fila_log: "queue.Queue[str]" = queue.Queue()
 
         self._montar_widgets()
         self.root.protocol("WM_DELETE_WINDOW", self._ao_fechar_janela)
         self.root.after(100, self._processar_fila_log)
-
-    # ------------------------------------------------------------------ #
-    # Montagem da interface
-    # ------------------------------------------------------------------ #
 
     def _montar_widgets(self) -> None:
         self._montar_barra_topo()
@@ -106,10 +68,7 @@ class ServidorGUI:
         card = tk.Frame(parent, bg=COR_PAINEL, padx=18, pady=16)
         card.pack(fill="x", padx=16, pady=(16, 8))
 
-        # Linha 1: campos, em grid com pesos -- cada coluna cresce/encolhe
-        # proporcionalmente junto com a largura da janela (grid é a
-        # ferramenta certa do Tkinter para isso; pack "expand" sozinho só
-        # divide igualmente, sem respeitar proporção).
+        # campos numa linha (grid com peso, cresce/encolhe com a janela)
         linha_campos = tk.Frame(card, bg=COR_PAINEL)
         linha_campos.pack(fill="x")
         linha_campos.columnconfigure(0, weight=2)
@@ -124,10 +83,7 @@ class ServidorGUI:
         self.entrada_porta = self._campo_grid(linha_campos, "Porta", self.var_porta, coluna=1)
         self.entrada_banco = self._campo_grid(linha_campos, "Banco (SQLite)", self.var_banco, coluna=2)
 
-        # Linha 2: botões, numa linha PRÓPRIA (não competem por espaço
-        # horizontal com os campos) e cada um com fill+expand, então a
-        # largura deles também acompanha a largura da janela -- e nunca
-        # ficam empurrados para fora da área visível.
+        # botoes numa linha separada, cada um com fill+expand
         linha_botoes = tk.Frame(card, bg=COR_PAINEL)
         linha_botoes.pack(fill="x", pady=(12, 0))
 
@@ -185,10 +141,6 @@ class ServidorGUI:
         self.texto_log.tag_config("erro", foreground=COR_ERRO)
         self.texto_log.tag_config("aviso", foreground=COR_AVISO)
 
-    # ------------------------------------------------------------------ #
-    # Iniciar / parar o subprocesso do servidor
-    # ------------------------------------------------------------------ #
-
     def _ao_clicar_iniciar(self) -> None:
         if self.rodando:
             return
@@ -206,18 +158,13 @@ class ServidorGUI:
             messagebox.showwarning("Porta inválida", "A porta deve ser um número inteiro.")
             return
 
-        # "-u": desliga o buffer de saida do subprocesso. Sem isso, como o
-        # stdout esta ligado a um pipe (nao a um terminal), o Python usa
-        # buffer em bloco por padrao e as linhas de log so apareceriam na
-        # tela quando o buffer enchesse ou o processo terminasse -- nada em
-        # tempo real.
+        # -u desliga o buffer de saida do subprocesso, senao o log so
+        # aparece em blocos (pipe nao e terminal, python bufferiza)
         comando = [sys.executable, "-u", CAMINHO_SERVIDOR_PY, "--host", host, "--porta", str(porta), "--banco", banco]
 
         kwargs = {}
         if os.name == "nt":
-            # Necessario no Windows para depois conseguir mandar CTRL_BREAK_EVENT
-            # ao parar (equivalente a um Ctrl+C, para o servidor encerrar de
-            # forma controlada em vez de ser simplesmente morto).
+            # necessario no windows pra depois poder mandar CTRL_BREAK_EVENT
             kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
 
         try:
@@ -246,8 +193,7 @@ class ServidorGUI:
         threading.Thread(target=self._ler_saida_processo, daemon=True).start()
 
     def _ler_saida_processo(self) -> None:
-        """Roda em thread separada: le a saida do subprocesso linha a linha
-        e empilha na fila (nunca mexe na tela diretamente)."""
+        # thread separada: le o stdout do processo linha a linha e empilha na fila
         processo = self.processo
         try:
             for linha in processo.stdout:
@@ -265,9 +211,7 @@ class ServidorGUI:
         threading.Thread(target=self._parar_processo, daemon=True).start()
 
     def _parar_processo(self) -> None:
-        """Tenta um encerramento controlado (equivalente a Ctrl+C, que o
-        servidor trata para avisar os clientes conectados antes de fechar);
-        se nao encerrar a tempo, forca o encerramento."""
+        # tenta encerramento controlado (equivalente a ctrl+c), forca se nao responder
         processo = self.processo
         try:
             if os.name == "nt":
@@ -284,10 +228,6 @@ class ServidorGUI:
                 processo.kill()
         except (OSError, ValueError):
             pass
-
-    # ------------------------------------------------------------------ #
-    # Fila de log (produzida pela thread de leitura, consumida aqui)
-    # ------------------------------------------------------------------ #
 
     def _processar_fila_log(self) -> None:
         try:
@@ -327,10 +267,6 @@ class ServidorGUI:
         self.botao_parar.config(state="disabled")
         self.bolinha_status.itemconfig(1, fill=COR_ERRO)
         self.rotulo_status.config(text="Parado", fg=COR_TEXTO_SUAVE)
-
-    # ------------------------------------------------------------------ #
-    # Encerramento da janela
-    # ------------------------------------------------------------------ #
 
     def _ao_fechar_janela(self) -> None:
         if self.rodando and self.processo is not None:

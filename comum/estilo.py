@@ -1,34 +1,17 @@
-# -*- coding: utf-8 -*-
-"""
-comum/estilo.py
-
-Sistema de estilo COMPARTILHADO por todas as janelas do projeto: o cliente
-gráfico, o servidor gráfico e a tela inicial (launcher). Existe para
-garantir uma identidade visual única e consistente -- mesma paleta de
-cores, mesma tipografia, mesmos componentes -- em vez de cada tela ter o
-seu próprio estilo isolado.
-
-Qualquer alteração de cor/fonte/marca feita aqui se propaga automaticamente
-para as três janelas.
-"""
+# estilo compartilhado pelas 3 janelas (cliente, servidor, launcher):
+# cores, fontes, marca "Fala Dai" e uns componentes reaproveitados
 
 import sys
 import time
 import tkinter as tk
 from tkinter import ttk
 
-# Nome do aplicativo (usado como marca dentro das janelas). Propositalmente
-# NÃO é usado como texto da barra de título do sistema operacional -- ver
-# `aplicar_janela_base()` abaixo.
 NOME_APP = "Fala Daí"
-SUBTITULO_APP = "REDES DE COMPUTADORES II"
+SUBTITULO_APP = ""
 
-# Reconhecimento de DPI no Windows: sem isso, o Windows pode escalar a
-# janela toda (ex.: 125%/150%) sem o Tkinter saber, fazendo partes da
-# janela "vazarem" para fora da tela visível. Roda uma única vez, na
-# primeira vez que qualquer janela do app importa este módulo -- sempre
-# antes de qualquer janela Tk ser criada.
 if sys.platform == "win32":
+    # sem isso o windows pode escalar a janela toda (dpi) sem o tkinter
+    # saber, e parte da janela fica fora da tela
     try:
         import ctypes
         ctypes.windll.shcore.SetProcessDpiAwareness(1)
@@ -39,13 +22,6 @@ if sys.platform == "win32":
             pass
 
 
-# ------------------------------------------------------------------------ #
-# Paleta
-#
-# Grafite quente (não azul-marinho) + um único par de cores de destaque com
-# significado próprio: verde-azulado (teal) = ação principal/"público",
-# âmbar = privado/atenção. Fundo de conteúdo em papel creme, não branco frio.
-# ------------------------------------------------------------------------ #
 COR_FUNDO = "#211f1b"
 COR_PAINEL = "#2a2823"
 COR_PAINEL_2 = "#34312a"
@@ -67,10 +43,6 @@ COR_PERIGO_BG = "#3a2621"
 COR_PERIGO_FG = "#f0b6a4"
 COR_PERIGO_BG_HOVER = "#4a2f28"
 
-# ------------------------------------------------------------------------ #
-# Tipografia: serifada (Georgia) para a marca/títulos, Segoe UI para
-# interface/corpo, Consolas para conteúdo tipo log/console.
-# ------------------------------------------------------------------------ #
 FONTE_DISPLAY = ("Georgia", 22, "bold")
 FONTE_MARCA_PEQUENA = ("Georgia", 15, "bold")
 FONTE_NOME_TOPO = ("Georgia", 14, "bold")
@@ -87,10 +59,7 @@ _ESTILO_CONFIGURADO = False
 
 
 def configurar_estilo_ttk() -> None:
-    """Configura estilos ttk nomeados ('Fala.*'), usados pelas poucas
-    situações em que um widget ttk é necessário (abas/Notebook, Scrollbar,
-    barra de progresso). Não altera o tema padrão do ttk globalmente além
-    do necessário, então é seguro chamar em qualquer uma das janelas."""
+    # estilos ttk nomeados (Fala.*), so pra notebook/scrollbar/progressbar
     global _ESTILO_CONFIGURADO
     if _ESTILO_CONFIGURADO:
         return
@@ -125,11 +94,7 @@ def configurar_estilo_ttk() -> None:
 
 
 def aplicar_janela_base(root, tamanho=None, centralizar=True) -> None:
-    """Aplica o essencial que toda janela do app deve ter: SEM nome extra
-    na barra de título do sistema operacional (apenas o ícone padrão),
-    fundo consistente e tema ttk configurado. Se `tamanho` for informado
-    (largura, altura), redimensiona e opcionalmente centraliza a janela
-    na tela do usuário."""
+    # sem nome na barra de titulo do SO, so o conteudo da janela
     root.title("")
     root.configure(bg=COR_FUNDO)
     configurar_estilo_ttk()
@@ -147,10 +112,7 @@ def aplicar_janela_base(root, tamanho=None, centralizar=True) -> None:
 
 
 def geometria_ajustada_a_tela(root, largura_alvo, altura_alvo, largura_min=760, altura_min=480, margem=100, margem_v=140):
-    """Calcula (e aplica) um tamanho de janela que cabe confortavelmente
-    na tela do usuário -- nunca maior do que ela --, e centraliza. Evita
-    usar um tamanho fixo que pode ultrapassar telas menores ou telas com
-    escala de DPI diferente."""
+    # tamanho que cabe na tela do usuario, nunca maior que ela, centralizado
     largura_tela = root.winfo_screenwidth()
     altura_tela = root.winfo_screenheight()
     largura = max(largura_min, min(largura_alvo, largura_tela - margem))
@@ -163,19 +125,9 @@ def geometria_ajustada_a_tela(root, largura_alvo, altura_alvo, largura_min=760, 
 
 
 def ajustar_ao_conteudo(root, margem=20, minimo=(0, 0)) -> None:
-    """Redimensiona e centraliza a janela para caber exatamente o que foi
-    montado nela (mais uma pequena margem de folga), em vez de usar um
-    tamanho fixo "chutado" na hora de escrever o código. Isso importa
-    porque fontes diferentes (Windows/macOS/Linux têm métricas um pouco
-    diferentes para a mesma fonte, e podem até substituir por outra se a
-    fonte pedida não existir) podem precisar de mais ou menos espaço do
-    que o esperado -- um tamanho fixo que "coube" num sistema pode cortar
-    botões em outro. Deve ser chamada DEPOIS que todos os widgets da
-    janela já foram criados e empacotados.
-
-    Só é confiável em janelas que não usam `pack_propagate(False)` (que
-    "esconde" o tamanho real dos filhos do cálculo) -- é o caso do
-    launcher, que é só uma pilha simples de rótulos e botões."""
+    # mede o tamanho real que os widgets ja montados precisam e aplica.
+    # usado quando o conteudo nao muda depois de montado (launcher),
+    # pra nao chutar um numero de pixels que pode nao caber
     root.update_idletasks()
     largura = max(root.winfo_reqwidth() + margem, minimo[0])
     altura = max(root.winfo_reqheight() + margem, minimo[1])
@@ -188,10 +140,7 @@ def ajustar_ao_conteudo(root, margem=20, minimo=(0, 0)) -> None:
 
 
 def criar_marca(parent, tamanho="grande", com_subtitulo=True):
-    """Cria e devolve um Frame com o "wordmark" do app (nome em serifada +
-    barrinha de destaque + subtítulo opcional). Reaproveitado na tela de
-    login do cliente, no servidor e no launcher, para a marca ficar sempre
-    idêntica em todo o app."""
+    # nome do app + barrinha de destaque + subtitulo opcional
     fonte = FONTE_DISPLAY if tamanho == "grande" else FONTE_MARCA_PEQUENA
     wrapper = tk.Frame(parent, bg=parent.cget("bg"))
     tk.Label(wrapper, text=NOME_APP, font=fonte, bg=parent.cget("bg"), fg=COR_TEXTO).pack()
@@ -213,8 +162,7 @@ def inicial(nome: str) -> str:
 
 
 def criar_avatar(parent, nome: str, bg_pai: str, tamanho: int = 30, destaque: bool = False) -> tk.Canvas:
-    """Desenha um avatar circular simples (iniciais) num Canvas pequeno.
-    Evita depender de emojis/ícones prontos para identificar pessoas."""
+    # circulo com a inicial do nome
     canvas = tk.Canvas(parent, width=tamanho, height=tamanho, bg=bg_pai, highlightthickness=0, bd=0)
     cor = COR_DESTAQUE if destaque else COR_AVATAR_NEUTRO
     canvas.create_oval(1, 1, tamanho - 1, tamanho - 1, fill=cor, outline="")
@@ -226,15 +174,13 @@ def criar_avatar(parent, nome: str, bg_pai: str, tamanho: int = 30, destaque: bo
 
 
 def status_dot(parent, bg_pai: str, cor: str, tamanho: int = 8) -> tk.Canvas:
-    """Bolinha de status (ex.: 'servidor rodando', 'conectado')."""
     canvas = tk.Canvas(parent, width=tamanho, height=tamanho, bg=bg_pai, highlightthickness=0, bd=0)
     canvas.create_oval(0, 0, tamanho, tamanho, fill=cor, outline="")
     return canvas
 
 
 def tornar_clicavel(widgets, ao_clicar, cor_normal, cor_hover) -> None:
-    """Vincula clique + destaque ao passar o mouse a um conjunto de widgets
-    que formam uma única "linha"/"cartão" clicável."""
+    # clique + hover num grupo de widgets que formam uma linha clicavel
     def _entrar(_evento=None):
         for w in widgets:
             try:
@@ -263,9 +209,7 @@ def tornar_clicavel(widgets, ao_clicar, cor_normal, cor_hover) -> None:
 
 
 def botao(parent, texto, comando, primario=True, **kwargs):
-    """Botão padronizado (cor de destaque por padrão, ou 'perigo' para
-    ações destrutivas/de saída) -- para não reimplementar as mesmas cores
-    de hover em cada tela."""
+    # botao padronizado. variante='perigo' pra acoes tipo sair/parar
     variante = kwargs.pop("variante", "primario" if primario else "secundario")
     if variante == "perigo":
         bg, fg, bg_hover = COR_PERIGO_BG, COR_PERIGO_FG, COR_PERIGO_BG_HOVER
@@ -284,8 +228,6 @@ def botao(parent, texto, comando, primario=True, **kwargs):
 
 
 def campo_com_rotulo(parent, rotulo, variavel, bg=None):
-    """Rótulo + Entry padronizados (usado nos formulários de login e de
-    configuração do servidor)."""
     bg = bg or COR_PAINEL
     tk.Label(parent, text=rotulo, font=FONTE_BASE, bg=bg, fg=COR_TEXTO, anchor="w").pack(fill="x")
     entrada = tk.Entry(
@@ -298,10 +240,8 @@ def campo_com_rotulo(parent, rotulo, variavel, bg=None):
 
 
 class ListaRolavel(tk.Frame):
-    """Painel com rolagem vertical para empilhar linhas customizadas (ex.:
-    usuários, salas, conversas privadas). Tk não tem um widget de lista
-    "rica" pronto -- este é o padrão comum para simular um, com Canvas +
-    Frame interno + Scrollbar."""
+    # lista com scroll pra linhas customizadas (usuarios, salas, privadas).
+    # tkinter nao tem isso pronto: e um Canvas + Frame interno + Scrollbar
 
     def __init__(self, parent, bg: str):
         super().__init__(parent, bg=bg)

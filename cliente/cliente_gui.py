@@ -1,58 +1,9 @@
-# -*- coding: utf-8 -*-
-"""
-cliente/cliente_gui.py
-
-Cliente de chat cliente-servidor com INTERFACE GRAFICA (Tkinter), implementando
-o item opcional do enunciado ("Interface grafica (GUI) em vez de terminal").
-
-Usa exatamente o mesmo protocolo de aplicacao definido em `comum/protocolo.py`
-e o mesmo servidor de `servidor/servidor.py` -- este e apenas um "front-end"
-alternativo ao `cliente/cliente.py` (modo texto).
-
-O visual (cores, fontes, marca "Fala Daí", componentes reutilizaveis) vem de
-`comum/estilo.py`, compartilhado com o servidor grafico e o launcher, para
-que as tres janelas do app tenham a mesma identidade visual.
-
-Bibliotecas usadas: apenas a biblioteca padrao do Python (tkinter, socket,
-threading, queue, time, argparse), sem dependencias externas.
-
-Uso:
-    python3 cliente_gui.py [--host <IP_DO_SERVIDOR>] [--porta <PORTA>] [--usuario <APELIDO>]
-
-    Os argumentos sao opcionais e servem apenas para pre-preencher os campos
-    da tela de conexao -- a conexao so acontece quando o usuario clica em
-    "Entrar". O IP nunca fica fixo no codigo, atendendo ao requisito de
-    testar em maquinas distintas do laboratorio.
-
-Recursos desta interface:
-    - Aba "Usuários": quem está na sala atual; clicar em alguém abre uma
-      conversa PRIVADA com essa pessoa.
-    - Aba "Salas": todas as salas com gente conectada agora, com contagem
-      de usuários; clicar entra nela (ou cria uma nova, se o nome digitado
-      ainda não existir).
-    - Aba "Privadas": conversas privadas já iniciadas, com indicador de
-      quantas mensagens não lidas há em cada uma.
-    - Navegação por "breadcrumb" no topo da conversa (# sala / › contato)
-      -- sempre visível, um clique volta para a sala a qualquer momento.
-    - Histórico de cada conversa privada isolado da conversa da sala: cada
-      uma tem sua própria linha do tempo.
-    - Indicador de "fulano está digitando..." e notificação (toast) de
-      mensagem privada nova, com contador de não lidas.
-    - Janela dimensionada dinamicamente com base na resolução real da
-      tela (e com reconhecimento de DPI no Windows), para nunca abrir
-      maior do que a tela do usuário.
-
-Arquitetura da GUI:
-    - Thread principal: roda o loop de eventos do Tkinter (mainloop) e e a
-      UNICA thread que pode mexer nos widgets (regra do Tkinter).
-    - Thread de conexao: dispara a conexao/login em segundo plano para nao
-      travar a janela enquanto espera resposta do servidor.
-    - Thread de recepcao: fica bloqueada em recv() esperando mensagens do
-      servidor durante toda a sessao, e as coloca numa fila (queue.Queue).
-    - A thread principal consome essa fila periodicamente (root.after) e so
-      ai atualiza a tela -- assim nunca se mexe em widget fora da thread
-      principal.
-"""
+# cliente de chat com interface grafica (tkinter). usa o mesmo protocolo
+# e servidor do cliente de texto, so muda a forma de mostrar/enviar.
+#
+# 3 threads: principal (tkinter, mexe nos widgets), conexao (login sem
+# travar a janela) e recepcao (fica lendo o socket e empilha numa fila,
+# que a thread principal esvazia a cada 100ms via root.after)
 
 import argparse
 import os
@@ -82,8 +33,6 @@ INTERVALO_MINIMO_ENVIO_DIGITANDO = 1.2
 
 
 class ClienteChatGUI:
-    """Janela principal do cliente de chat gráfico."""
-
     def __init__(self, root, host: str, porta, usuario: str):
         self.root = root
         aplicar_janela_base(self.root)
@@ -100,8 +49,8 @@ class ClienteChatGUI:
 
         self.sala = protocolo.SALA_PADRAO
         self.conversa_atual = ("sala", self.sala)
-        self.conversas = {}
-        self.contatos_privados = {}
+        self.conversas = {}          # (tipo, nome) -> lista de mensagens em cache
+        self.contatos_privados = {}  # nome -> qtd nao lidas
         self.ordem_privados = []
         self.digitando = {}
         self._ultimo_envio_digitando = 0.0
@@ -118,9 +67,41 @@ class ClienteChatGUI:
         self.root.after(100, self._processar_fila)
         self.root.after(500, self._atualizar_indicador_digitando)
 
-    # ====================================================================
-    # TELA DE LOGIN
-    # ====================================================================
+        self.tentando_reconectar = False
+        self.intervalo_reconexao_ms = 3000  # Tenta a cada 3 segundos
+
+    def _tentar_reconectar(self) -> None:
+        """Tenta reconectar periodicamente ao servidor após uma queda."""
+        if not self.tentando_reconectar or self._fechando:
+            return
+
+        try:
+            # Tenta criar um novo socket e conectar
+            novo_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            novo_sock.connect((self.host, self.porta))
+            
+            self.sock = novo_sock
+            self.leitor = protocolo.LeitorDeMensagens(self.sock)
+            
+            # Envia a mensagem de LOGIN novamente com o mesmo usuaio
+            protocolo.enviar(self.sock, {"tipo": "LOGIN", "usuario": self.usuario})
+            
+            self.conectado = True
+            self.tentando_reconectar = False
+            
+            # Reinicia a thread de recepcao mensagens
+            self.thread_rx = threading.Thread(target=self._loop_recepcao, daemon=True)
+            self.thread_rx.start()
+            
+            # Notifica na tela que reconectou
+            self._adicionar_mensagem_sistema("Conexão restabelecida com o servidor!")
+            return
+        except OSError:
+            # Se ainda nao conseguiu conectar, agenda nova tentativa em 3s
+            self._adicionar_mensagem_sistema("Servidor offline. Tentando reconectar em 3s...")
+            self.root.after(self.intervalo_reconexao_ms, self._tentar_reconectar)
+
+    # ---- tela de login ----
 
     def _montar_tela_login(self) -> None:
         self.frame_login = tk.Frame(self.container, bg=COR_FUNDO)
@@ -151,9 +132,7 @@ class ClienteChatGUI:
             entrada.bind("<Return>", lambda e: self._ao_clicar_conectar())
         self.entrada_host.focus_set()
 
-    # ------------------------------------------------------------------ #
-    # Conexao / login (roda em thread separada para nao travar a janela)
-    # ------------------------------------------------------------------ #
+    # ---- login (conexao roda em thread separada pra nao travar a janela) ----
 
     def _ler_e_validar_campos(self):
         host = self.var_host.get().strip()
@@ -191,6 +170,7 @@ class ClienteChatGUI:
         thread.start()
 
     def _conectar_em_thread(self, host: str, porta: int, usuario: str) -> None:
+        # roda fora da thread principal. so toca em widget via root.after
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(5)
         try:
@@ -246,9 +226,7 @@ class ClienteChatGUI:
         self._solicitar_lista()
         self._solicitar_lista_salas()
 
-    # ====================================================================
-    # TELA PRINCIPAL DO CHAT
-    # ====================================================================
+    # ---- tela principal do chat ----
 
     def _montar_tela_chat(self, host, porta) -> None:
         self.frame_chat = tk.Frame(self.container, bg=COR_FUNDO)
@@ -317,6 +295,8 @@ class ClienteChatGUI:
         )
         self.rotulo_sala_atual_aba.pack(fill="x", padx=12, pady=(0, 8))
 
+        # dica embaixo e empacotada antes da lista (que tem expand=True),
+        # senao ela fica sem espaco reservado em janelas pequenas
         tk.Label(
             aba, text="Clique em alguém para abrir uma conversa privada.",
             font=FONTE_PEQUENA, bg=COR_PAINEL, fg=COR_TEXTO_SUAVE, wraplength=230, justify="left", anchor="w",
@@ -358,7 +338,7 @@ class ClienteChatGUI:
         self.lista_privadas = ListaRolavel(aba, bg=COR_PAINEL)
         self.lista_privadas.pack(fill="both", expand=True, padx=8)
 
-    # ---- Área de conversa (direita) -------------------------------------
+    # ---- area de conversa (direita) ----
 
     def _montar_area_conversa(self, parent) -> None:
         area = tk.Frame(parent, bg=COR_FUNDO)
@@ -381,15 +361,8 @@ class ClienteChatGUI:
         )
         self.rotulo_digitando.pack(fill="x")
 
-        # IMPORTANTE: o rodapé (caixa de mensagem) é empacotado ANTES da
-        # área de texto que se expande (fill="both", expand=True). Um
-        # widget com expand=True reivindica toda a área ainda livre no
-        # momento em que é empacotado -- se ele for empacotado primeiro,
-        # não sobra espaço reservado para quem vem depois, mesmo usando
-        # side="bottom". Empacotar o rodapé primeiro garante que o espaço
-        # dele já fique reservado, e a área de texto simplesmente preenche
-        # o que sobrar -- assim a caixa de mensagem nunca fica escondida
-        # abaixo da borda da janela, mesmo em telas pequenas.
+        # rodape empacotado antes da area de texto (expand=True), pra ja
+        # reservar o espaco dele e nunca ficar escondido em janela pequena
         rodape = tk.Frame(area, bg=COR_PAINEL, height=64)
         rodape.pack(fill="x", side="bottom")
         rodape.pack_propagate(False)
@@ -429,9 +402,7 @@ class ClienteChatGUI:
         t.tag_configure("sistema", justify="center", foreground="#8a8371", font=("Segoe UI", 9, "italic"), spacing1=6)
         t.tag_configure("erro", justify="center", foreground=COR_ERRO, font=("Segoe UI", 9, "italic"), spacing1=6)
 
-    # ====================================================================
-    # Rede: thread de recepção -> fila -> GUI (thread principal)
-    # ====================================================================
+    # ---- rede: thread de recepcao -> fila -> gui (thread principal) ----
 
     def _loop_recepcao(self) -> None:
         while self.rodando:
@@ -460,6 +431,7 @@ class ClienteChatGUI:
         self.root.after(100, self._processar_fila)
 
     def _tratar_mensagem(self, mensagem: dict) -> None:
+        # roteador do lado do cliente, um tipo por vez
         tipo = mensagem.get("tipo")
 
         if tipo == "MSG":
@@ -522,6 +494,8 @@ class ClienteChatGUI:
             self._ao_desconectar()
 
     def _processar_historico(self, sala, mensagens: list) -> None:
+        # com sala = geral perdida daquela sala. sem sala = privadas,
+        # calcula quem e "o outro" pra jogar na conversa certa
         if not mensagens:
             return
         if sala:
@@ -541,9 +515,7 @@ class ClienteChatGUI:
                 self._bolha(("privada", outro), de, item.get("texto"), quando, propria=propria)
             self._atualizar_lista_privados_widget()
 
-    # ====================================================================
-    # Troca de sala
-    # ====================================================================
+    # ---- troca de sala ----
 
     def _solicitar_lista(self) -> None:
         if self.conectado:
@@ -603,10 +575,7 @@ class ClienteChatGUI:
     def _voltar_para_sala(self) -> None:
         self._selecionar_conversa(("sala", self.sala))
 
-    # ====================================================================
-    # Lista de usuários da sala / lista de salas / lista de privadas
-    # (listas customizadas com avatar, não Listbox nativo)
-    # ====================================================================
+    # ---- listas: usuarios da sala, salas, privadas ----
 
     def _atualizar_lista_usuarios(self, usuarios: list) -> None:
         self.lista_usuarios.limpar()
@@ -648,9 +617,7 @@ class ClienteChatGUI:
             linha.pack(fill="x")
             tornar_clicavel([linha, marca, lbl], lambda nm=nome: self._ao_clicar_sala(nm), COR_PAINEL, COR_PAINEL_2)
 
-    # ====================================================================
-    # Conversas privadas: registro de contatos, não lidas, seleção
-    # ====================================================================
+    # ---- conversas privadas: contatos, nao lidas, selecao ----
 
     def _registrar_contato_privado(self, nome: str, marcar_recente: bool = True) -> None:
         if nome not in self.contatos_privados:
@@ -711,9 +678,7 @@ class ClienteChatGUI:
         self._selecionar_conversa(("privada", nome))
         self.notebook.select(self.aba_privadas)
 
-    # ====================================================================
-    # Seleção / renderização da conversa aberta no momento
-    # ====================================================================
+    # ---- selecao / desenho da conversa aberta ----
 
     def _selecionar_conversa(self, conversa_id) -> None:
         self.conversa_atual = conversa_id
@@ -736,6 +701,7 @@ class ClienteChatGUI:
             self.entrada_mensagem.focus_set()
 
     def _renderizar_conversa(self, conversa_id) -> None:
+        # limpa e redesenha tudo que ta em cache dessa conversa
         self.texto_chat.config(state="normal")
         self.texto_chat.delete("1.0", "end")
         self.texto_chat.config(state="disabled")
@@ -747,6 +713,7 @@ class ClienteChatGUI:
                 self._inserir_linha_widget(texto, tag)
 
     def _bolha(self, conversa_id, quem, texto, hora, propria: bool) -> None:
+        # guarda no cache e so desenha se for a conversa aberta agora
         cache = self.conversas.setdefault(conversa_id, [])
         cache.append(("propria" if propria else "outro", quem, texto, hora))
         if conversa_id == self.conversa_atual:
@@ -778,9 +745,7 @@ class ClienteChatGUI:
         t.config(state="disabled")
         t.see("end")
 
-    # ====================================================================
-    # Envio de mensagens e indicador de "digitando..."
-    # ====================================================================
+    # ---- envio e indicador de "digitando" ----
 
     def _enviar(self, evento=None) -> None:
         if not self.conectado:
@@ -806,6 +771,7 @@ class ClienteChatGUI:
         self.var_mensagem.set("")
 
     def _ao_digitar(self, evento=None) -> None:
+        # manda DIGITANDO com limite de frequencia pra nao floodar a rede
         if not self.conectado:
             return
         if evento is not None and evento.keysym in ("Return", "Tab"):
@@ -825,6 +791,7 @@ class ClienteChatGUI:
             pass
 
     def _atualizar_indicador_digitando(self) -> None:
+        # roda a cada 500ms, tira quem ja expirou e atualiza o texto
         if self._fechando:
             return
         if hasattr(self, "rotulo_digitando"):
@@ -843,9 +810,7 @@ class ClienteChatGUI:
             self.rotulo_digitando.config(text=texto)
         self.root.after(500, self._atualizar_indicador_digitando)
 
-    # ====================================================================
-    # Notificações (toast)
-    # ====================================================================
+    # ---- notificacoes (toast) ----
 
     def _mostrar_toast(self, texto: str, ao_clicar=None, cor=None, avatar_nome=None) -> None:
         cor = cor or COR_DESTAQUE
@@ -893,10 +858,8 @@ class ClienteChatGUI:
             if toast.winfo_exists():
                 toast.place(in_=self.container, relx=1.0, rely=1.0, anchor="se", x=-18, y=-18 - (60 * i))
 
-    # ====================================================================
-    # Encerramento / reconexão
-    # ====================================================================
-
+    # ---- encerramento / reconexao ----
+    
     def _ao_desconectar(self) -> None:
         self.conectado = False
         self.rodando = False
@@ -906,23 +869,65 @@ class ClienteChatGUI:
         except OSError:
             pass
 
+        # Se a janela estiver sendo fechada pelo usuario, nao faz nada
         if self._fechando:
             return
 
-        if self.frame_chat is not None:
-            self.frame_chat.destroy()
-            self.frame_chat = None
+        # Em vez de destruir o frame_chat e voltar pra tela de login:
+        # 1. Exibe aviso em vermelho na conversa atual
+        self._linha(self.conversa_atual, "Conexão perdida. Tentando reconectar ao servidor em 3s...", "erro")
 
-        self.sala = protocolo.SALA_PADRAO
-        self.conversa_atual = ("sala", self.sala)
-        self.conversas = {}
-        self.contatos_privados = {}
-        self.ordem_privados = []
-        self.digitando = {}
-        self._toasts_ativos = []
+        # 2. Agenda a primeira tentativa de reconexao automatica
+        self.root.after(3000, self._tentar_reconectar_automatico)
 
-        self._montar_tela_login()
-        self.rotulo_status_login.config(text="A conexão com o servidor foi encerrada.")
+    def _tentar_reconectar_automatico(self) -> None:
+        if self._fechando or self.conectado:
+            return
+
+        # Roda a tentativa de conexao em uma thread separada para nao travara janela
+        thread = threading.Thread(
+            target=self._executar_reconexao_thread,
+            args=(self._host_prefill, self._porta_prefill, self.usuario),
+            daemon=True
+        )
+        thread.start()
+
+    def _executar_reconexao_thread(self, host: str, porta: int, usuario: str) -> None:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(4)
+        try:
+            sock.connect((host, porta))
+            leitor = protocolo.LeitorDeMensagens(sock)
+
+            # Tenta relogar com o mesmo usuario
+            protocolo.enviar(sock, {"tipo": "LOGIN", "usuario": usuario})
+            resposta = leitor.proxima_mensagem()
+
+            if resposta and resposta.get("tipo") == "LOGIN_OK":
+                sock.settimeout(None)
+                self.sock = sock
+                self.leitor = leitor
+                self.conectado = True
+                self.rodando = True
+
+                # Na thread principal, avisa que reconectou e reativa a recepcao
+                self.root.after(0, lambda: self._linha(self.conversa_atual, "Reconectado com sucesso!", "sistema"))
+
+                thread_recepcao = threading.Thread(target=self._loop_recepcao, daemon=True)
+                thread_recepcao.start()
+
+                # Pede a lista de usuarios e salas atualizada para o servidor
+                self.root.after(0, self._solicitar_lista)
+                self.root.after(0, self._solicitar_lista_salas)
+                return
+            else:
+                sock.close()
+        except (OSError, ValueError):
+            pass
+
+        # Se o servidor ainda estiver offline, agenda nova tentativa
+        self.root.after(0, lambda: self._linha(self.conversa_atual, "Servidor offline. Tentando novamente...", "erro"))
+        self.root.after(3000, self._tentar_reconectar_automatico)
 
     def _sair(self) -> None:
         self._fechando = True

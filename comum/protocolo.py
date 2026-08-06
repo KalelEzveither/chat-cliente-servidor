@@ -1,203 +1,57 @@
-# -*- coding: utf-8 -*-
-"""
-comum/protocolo.py
-
-Define o protocolo de aplicacao usado na comunicacao entre cliente e servidor.
-
-FORMATO DE SERIALIZACAO
-------------------------
-Cada mensagem trocada e um objeto JSON (texto), codificado em UTF-8, seguido
-de um caractere de nova linha '\n'. O uso de '\n' como delimitador resolve o
-problema de "fronteiras de mensagem" do TCP, que e um protocolo de fluxo de
-bytes sem garantia de que um send() do lado do emissor corresponda a um unico
-recv() do lado do receptor (mensagens podem chegar fragmentadas ou coladas).
-
-Escolhemos JSON (em vez de um formato binario proprio) porque:
-  - e legivel por humanos, o que facilita debug e demonstracao em laboratorio;
-  - e nativamente suportado pela biblioteca padrao do Python (modulo json),
-    sem dependencias externas;
-  - e flexivel o suficiente para representar todos os tipos de mensagem do
-    protocolo com um unico esquema (campo "tipo" + payload).
-
-ESTRUTURA GERAL DE UMA MENSAGEM
---------------------------------
-{
-    "tipo": "<TIPO_DA_MENSAGEM>",
-    ... campos especificos do tipo ...
-}
-
-TIPOS DE MENSAGEM (cliente -> servidor)
------------------------------------------
-LOGIN        {"tipo": "LOGIN", "usuario": "<nome>"}
-    Enviado logo apos a conexao TCP ser estabelecida, como PRIMEIRA
-    mensagem, para identificar o cliente e entrar no chat. Nao ha senha
-    nem conta: o apelido sozinho identifica o cliente (requisito
-    obrigatorio do trabalho). So e recusado (LOGIN_ERRO) se o apelido for
-    invalido ou ja estiver em uso por uma sessao ativa no momento.
-
-MSG          {"tipo": "MSG", "texto": "<conteudo>"}
-    Mensagem de broadcast: sera repassada pelo servidor a todos os demais
-    clientes que estiverem na MESMA SALA de quem enviou (exceto quem
-    enviou, que ja ecoa localmente). Toda conexao comeca na sala padrao
-    "geral" (ver SALA_PADRAO) e muda de sala com ENTRAR_SALA. E persistida
-    no banco de dados para poder ser recuperada depois como HISTORICO por
-    quem ja esteve naquela sala (ver HISTORICO).
-
-PRIVADA      {"tipo": "PRIVADA", "destino": "<usuario>", "texto": "<conteudo>"}
-    Mensagem privada endereca a um unico usuario (comando /msg no cliente).
-    Independe de sala: chega ao destinatario mesmo que ele esteja em uma
-    sala diferente da de quem enviou.
-
-LISTAR       {"tipo": "LISTAR"}
-    Solicita ao servidor a lista de usuarios conectados NA MESMA SALA do
-    solicitante no momento (comando /lista no cliente).
-
-ENTRAR_SALA  {"tipo": "ENTRAR_SALA", "sala": "<nome>"}
-    Pede para trocar da sala atual para a sala indicada (comando /entrar
-    no cliente). Assim como o apelido, a sala usa AUTO-CRIACAO: se a sala
-    informada nunca foi usada antes, ela passa a existir a partir desse
-    momento (nao ha uma lista fixa de salas pre-cadastradas). O cliente
-    sai da sala anterior (os demais membros dela recebem SAIU, e o
-    servidor marca esse momento como a "ultima saida" do cliente daquela
-    sala) e entra na nova (os demais membros dela recebem ENTROU). Em
-    seguida, recebe um HISTORICO com as mensagens gerais da nova sala que
-    ele perdeu desde a ultima vez que esteve nela (nada, se for a primeira
-    vez).
-
-LISTAR_SALAS {"tipo": "LISTAR_SALAS"}
-    Solicita ao servidor a lista de salas atualmente com pelo menos um
-    usuario conectado, e quantos usuarios ha em cada uma (comando /salas
-    no cliente).
-
-DIGITANDO   {"tipo": "DIGITANDO", "destino": "<usuario>" (OPCIONAL)}
-    Avisa que o remetente esta digitando uma mensagem agora. Se "destino"
-    estiver presente, e um aviso de digitacao PRIVADA (encaminhado so para
-    aquele usuario); se ausente, e um aviso de digitacao na SALA atual
-    (encaminhado a todos os demais membros dela). Efemero: nao e
-    persistido no banco de dados nem logado pelo servidor. O cliente deve
-    reenviar essa mensagem periodicamente enquanto o usuario continua
-    digitando (o lado receptor expira o indicador sozinho apos alguns
-    segundos sem receber um novo aviso).
-
-SAIR         {"tipo": "SAIR"}
-    Informa ao servidor que o cliente deseja encerrar a conexao de forma
-    controlada (comando /sair no cliente).
-
-TIPOS DE MENSAGEM (servidor -> cliente)
------------------------------------------
-LOGIN_OK     {"tipo": "LOGIN_OK", "usuario": "<nome>"}
-    Confirma que o apelido foi aceito. Logo apos, o cliente e colocado na
-    sala padrao "geral" (ver SALA_PADRAO) e pode receber ate dois
-    HISTORICO em seguida: o de mensagens privadas, e o de mensagens gerais
-    perdidas na sala "geral" (ver HISTORICO).
-
-LOGIN_ERRO   {"tipo": "LOGIN_ERRO", "motivo": "<mensagem>"}
-    Apelido invalido, ou apelido com uma sessao ja ativa no momento; a
-    conexao e encerrada apos o envio.
-
-HISTORICO    {"tipo": "HISTORICO", "sala": "<nome>" (OPCIONAL), "mensagens": [
-                 {"tipo": "PRIVADA"|"MSG", "de": "<usuario>",
-                  "destino": "<usuario>" (so em PRIVADA),
-                  "texto": "<conteudo>", "quando": "<timestamp ISO-8601>"},
-                 ... ]}
-    Ha dois tipos de HISTORICO, diferenciados pela presenca do campo
-    "sala":
-      - SEM "sala": historico de mensagens PRIVADAS (mensagens tipo
-        PRIVADA) que o usuario enviou ou recebeu. Enviado uma unica vez,
-        logo apos o LOGIN_OK.
-      - COM "sala": mensagens GERAIS (tipo MSG) daquela sala que o usuario
-        perdeu desde a ULTIMA VEZ que esteve nela (troca de sala ou
-        desconexao) -- ver ENTRAR_SALA. Enviado ao entrar numa sala
-        (login inicial ou ENTRAR_SALA), mas SO se o usuario ja tiver
-        estado nela antes; quem entra pela primeira vez numa sala nao
-        recebe HISTORICO nenhum dela, so passa a ver as mensagens dali em
-        diante, ao vivo.
-    Em ambos os casos, se nao houver nada a mostrar, nenhum HISTORICO e
-    enviado (a lista "mensagens" nunca vem vazia).
-
-MSG          {"tipo": "MSG", "de": "<usuario>", "sala": "<nome>", "texto": "<conteudo>"}
-    Mensagem de broadcast recebida de outro usuario da mesma sala.
-
-PRIVADA      {"tipo": "PRIVADA", "de": "<usuario>", "texto": "<conteudo>"}
-    Mensagem privada recebida de outro usuario.
-
-LISTA        {"tipo": "LISTA", "sala": "<nome>", "usuarios": ["<nome1>", ...]}
-    Resposta ao comando LISTAR: usuarios conectados na sala indicada.
-
-LISTA_SALAS  {"tipo": "LISTA_SALAS", "salas": [ {"nome": "<nome>",
-                 "usuarios": <quantidade>}, ... ]}
-    Resposta ao comando LISTAR_SALAS.
-
-SALA_OK      {"tipo": "SALA_OK", "sala": "<nome>"}
-    Confirma que o cliente agora esta na sala indicada (resposta a
-    ENTRAR_SALA, ou enviado implicitamente ao entrar na sala padrao
-    apos o login).
-
-SALA_ERRO    {"tipo": "SALA_ERRO", "motivo": "<mensagem>"}
-    Nome de sala invalido em um pedido de ENTRAR_SALA; o cliente permanece
-    na sala em que estava.
-
-ENTROU       {"tipo": "ENTROU", "usuario": "<nome>", "sala": "<nome>"}
-    Notificacao, para os demais membros da sala, de que um usuario entrou
-    nela (broadcast automatico ao logar ou ao trocar de sala).
-
-SAIU         {"tipo": "SAIU", "usuario": "<nome>", "sala": "<nome>"}
-    Notificacao, para os demais membros da sala, de que um usuario saiu
-    dela (broadcast automatico ao trocar de sala ou ao desconectar).
-
-DIGITANDO   {"tipo": "DIGITANDO", "de": "<usuario>", "sala": "<nome>" (SO NA SALA)}
-    Repasse do aviso de digitacao. Sem "sala": aviso PRIVADO (o usuario
-    "de" esta digitando uma mensagem para o destinatario deste envio).
-    Com "sala": aviso de digitacao no chat geral daquela sala.
-
-ERRO         {"tipo": "ERRO", "mensagem": "<descricao>"}
-    Erro generico (ex.: destinatario de mensagem privada nao encontrado,
-    comando desconhecido, JSON malformado).
-
-SISTEMA      {"tipo": "SISTEMA", "mensagem": "<texto>"}
-    Mensagem informativa do servidor (ex.: boas-vindas, ajuda).
-"""
+# protocolo de aplicacao do chat.
+# cada mensagem e um JSON de uma linha, terminado em \n.
+#
+# cliente -> servidor:
+#   LOGIN        {tipo, usuario}
+#   MSG          {tipo, texto}                          -> broadcast na sala atual
+#   PRIVADA      {tipo, destino, texto}
+#   LISTAR       {tipo}                                 -> usuarios da sala atual
+#   ENTRAR_SALA  {tipo, sala}                            -> troca de sala (cria se nao existe)
+#   LISTAR_SALAS {tipo}
+#   DIGITANDO    {tipo, destino?}                        -> destino ausente = aviso pra sala
+#   SAIR         {tipo}
+#
+# servidor -> cliente:
+#   LOGIN_OK     {tipo, usuario}
+#   LOGIN_ERRO   {tipo, motivo}
+#   HISTORICO    {tipo, sala?, mensagens}                -> com sala = geral perdida, sem sala = privadas
+#   MSG          {tipo, de, sala, texto}
+#   PRIVADA      {tipo, de, texto}
+#   LISTA        {tipo, sala, usuarios}
+#   LISTA_SALAS  {tipo, salas: [{nome, usuarios}]}
+#   SALA_OK      {tipo, sala}
+#   SALA_ERRO    {tipo, motivo}
+#   ENTROU/SAIU  {tipo, usuario, sala}
+#   DIGITANDO    {tipo, de, sala?}
+#   ERRO         {tipo, mensagem}
+#   SISTEMA      {tipo, mensagem}
 
 import json
 import socket
 from datetime import datetime
 
-# Delimitador de mensagens no fluxo de bytes do TCP.
 DELIMITADOR = "\n"
 CODIFICACAO = "utf-8"
 
-# Tamanho maximo aceito para um nome de usuario.
 TAMANHO_MAX_USUARIO = 32
-# Tamanho maximo aceito para o corpo de uma mensagem de texto.
 TAMANHO_MAX_TEXTO = 2000
-# Tamanho maximo aceito para um nome de sala/canal.
 TAMANHO_MAX_SALA = 32
-# Sala em que todo cliente e colocado automaticamente ao logar.
 SALA_PADRAO = "geral"
 
 
 def empacotar(mensagem: dict) -> bytes:
-    """Serializa um dicionario Python em bytes prontos para envio via socket."""
+    # dict -> bytes prontos pra mandar no socket
     texto_json = json.dumps(mensagem, ensure_ascii=False)
     return (texto_json + DELIMITADOR).encode(CODIFICACAO)
 
 
 def enviar(sock: socket.socket, mensagem: dict) -> None:
-    """Envia um dicionario como mensagem do protocolo por um socket TCP."""
     sock.sendall(empacotar(mensagem))
 
 
 class LeitorDeMensagens:
-    """
-    Envolve um socket TCP e resolve o problema de fragmentacao/agrupamento de
-    mensagens do fluxo de bytes, entregando um dicionario JSON completo por
-    chamada de `proxima_mensagem()`.
-
-    Mantem um buffer interno; a cada recv(), procura pelo delimitador '\n'
-    para extrair mensagens completas, mesmo que o TCP tenha entregado varias
-    mensagens juntas em uma unica leitura, ou apenas um pedaco de uma
-    mensagem maior.
-    """
+    # le do socket ate achar o \n e devolve o dict.
+    # resolve o problema de o TCP poder juntar ou fatiar mensagens
 
     def __init__(self, sock: socket.socket, tamanho_buffer: int = 4096):
         self._sock = sock
@@ -205,15 +59,11 @@ class LeitorDeMensagens:
         self._buffer = ""
 
     def proxima_mensagem(self):
-        """
-        Retorna o proximo dicionario de mensagem recebido, ou None se a
-        conexao foi fechada pelo lado remoto.
-        Lanca ValueError se os dados recebidos nao forem JSON valido.
-        """
+        # retorna None se a conexao fechou. lanca ValueError se nao for JSON valido
         while DELIMITADOR not in self._buffer:
             dados = self._sock.recv(self._tamanho_buffer)
             if not dados:
-                return None  # conexao encerrada
+                return None
             self._buffer += dados.decode(CODIFICACAO, errors="replace")
 
         linha, self._buffer = self._buffer.split(DELIMITADOR, 1)
@@ -222,18 +72,12 @@ class LeitorDeMensagens:
             return self.proxima_mensagem()
         dados = json.loads(linha)
         if not isinstance(dados, dict):
-            # JSON sintaticamente valido (ex.: uma lista ou um numero), mas
-            # fora do formato esperado (objeto com campo "tipo"). Tratado
-            # como mensagem malformada, igual a um erro de sintaxe JSON.
-            raise ValueError("Mensagem JSON precisa ser um objeto, nao "
-                              f"'{type(dados).__name__}'.")
+            raise ValueError(f"mensagem precisa ser um objeto JSON, veio '{type(dados).__name__}'")
         return dados
 
 
 def _identificador_valido(valor: str, tamanho_max: int) -> bool:
-    """Regra comum de validacao para apelidos e nomes de sala: nao vazio,
-    sem espacos, dentro do tamanho maximo e que nao comece com '/' (para
-    nao ser confundido com um comando do cliente)."""
+    # regra usada tanto pra apelido quanto pra nome de sala
     if not valor:
         return False
     if len(valor) > tamanho_max:
@@ -246,25 +90,19 @@ def _identificador_valido(valor: str, tamanho_max: int) -> bool:
 
 
 def validar_nome_usuario(nome: str) -> bool:
-    """Valida se um apelido e aceitavel: nao vazio, sem espacos, tamanho ok."""
     return _identificador_valido(nome, TAMANHO_MAX_USUARIO)
 
 
 def validar_nome_sala(nome: str) -> bool:
-    """Valida se um nome de sala/canal e aceitavel (mesma regra do apelido)."""
     return _identificador_valido(nome, TAMANHO_MAX_SALA)
 
 
 def formatar_quando(timestamp_iso: str) -> str:
-    """
-    Converte um timestamp ISO-8601 (como os gravados no historico do banco
-    de dados, em UTC) para uma string curta e amigavel no horario local do
-    cliente, ex.: '04/08 13:25'. Usado pelos clientes ao exibir o HISTORICO.
-    """
+    # timestamp ISO em UTC -> string curta no horario local, ex '04/08 13:25'
     try:
         momento = datetime.fromisoformat(timestamp_iso)
         if momento.tzinfo is not None:
-            momento = momento.astimezone()  # converte de UTC para o horario local
+            momento = momento.astimezone()
         return momento.strftime("%d/%m %H:%M")
     except (ValueError, TypeError):
         return timestamp_iso or ""

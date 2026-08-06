@@ -1,37 +1,6 @@
-# -*- coding: utf-8 -*-
-"""
-servidor/servidor.py
-
-Servidor de chat cliente-servidor (Trabalho Pratico - Redes de Computadores 2).
-
-Responsabilidades do servidor:
-  - Aceitar conexoes TCP de multiplos clientes simultaneamente (uma thread
-    por cliente conectado);
-  - Identificar cada cliente por um apelido unico ao entrar no chat, com
-    apenas uma sessao ativa por vez por apelido (nao ha senha nem conta:
-    o apelido sozinho e a identificacao, como pede o requisito obrigatorio
-    do trabalho);
-  - Rotear mensagens: broadcast por sala/canal, mensagens privadas, listagem
-    de usuarios conectados (por sala) e notificacoes de entrada/saida;
-  - Gerenciar salas/canais tematicos: todo cliente comeca na sala "geral" e
-    pode trocar de sala a qualquer momento (comando /entrar), com as salas
-    sendo criadas automaticamente pelo primeiro usuario que entrar nelas;
-  - Persistir o historico de mensagens em um banco de dados SQLite: as
-    PRIVADAS sao sempre reenviadas ao usuario logo apos o login; as GERAIS
-    (broadcast) so sao reenviadas, ao entrar numa sala, se o usuario ja
-    tiver estado naquela sala antes -- e so as que ele perdeu desde entao
-    (ver servidor/bancodedados.py);
-  - Encerrar conexoes de forma controlada.
-
-Uso:
-    python3 servidor.py [--host 0.0.0.0] [--porta 5000] [--banco chat.db]
-
-O endereco/porta NAO sao fixos no codigo (requisito do trabalho): podem ser
-configurados via argumentos de linha de comando, e por padrao o servidor
-escuta em 0.0.0.0 (todas as interfaces de rede da maquina), o que permite
-que ele seja acessado por outras maquinas do laboratorio a partir do IP real
-da maquina servidora.
-"""
+# servidor de chat cliente-servidor. aceita varios clientes via TCP,
+# uma thread por cliente. roteia broadcast (por sala), privadas, salas
+# e historico. uso: python3 servidor.py --host 0.0.0.0 --porta 5000 --banco chat.db
 
 import argparse
 import os
@@ -41,21 +10,13 @@ import sys
 import threading
 from datetime import datetime
 
-# Garante que a pasta raiz do projeto (que contem o pacote `comum`) esteja no
-# path, independente de onde o script for executado.
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from comum import protocolo
-import bancodedados  # modulo servidor/bancodedados.py (mesma pasta deste arquivo)
+import bancodedados
 
 if sys.platform == "win32":
-    # No Windows, Ctrl+C (SIGINT) ja vira KeyboardInterrupt por padrao, mas
-    # Ctrl+Break (SIGBREAK) nao tem handler Python associado por padrao --
-    # sem isso, um CTRL_BREAK_EVENT mata o processo direto (o Windows nunca
-    # chega a levantar KeyboardInterrupt), o que impede o encerramento
-    # controlado (aviso aos clientes, fechamento do banco etc.). Isso e
-    # usado por servidor_gui.py para poder pedir um encerramento controlado
-    # de fora, ja que so e possivel mandar CTRL_BREAK_EVENT (nao CTRL_C
-    # normal) para um subprocesso a partir de outro processo no Windows.
+    # ctrl+break no windows nao vira KeyboardInterrupt sozinho.
+    # precisa disso pra servidor_gui.py conseguir pedir encerramento controlado
     signal.signal(signal.SIGBREAK, signal.default_int_handler)
 
 
@@ -65,8 +26,7 @@ def log(msg: str) -> None:
 
 
 class ClienteConectado:
-    """Representa um cliente conectado ao servidor, com seu socket, apelido
-    e a sala/canal em que se encontra no momento."""
+    # um cliente conectado: socket, apelido e sala atual
 
     def __init__(self, sock: socket.socket, endereco):
         self.sock = sock
@@ -78,36 +38,22 @@ class ClienteConectado:
 
 
 class ServidorChat:
-    """
-    Encapsula o estado do servidor: lista de clientes conectados, socket de
-    escuta e a logica de roteamento de mensagens entre eles.
-
-    Sincronizacao: como cada cliente e atendido por uma thread propria, o
-    dicionario compartilhado de clientes conectados e protegido por um Lock
-    para evitar condicoes de corrida (ex.: dois clientes fazendo login com o
-    mesmo apelido ao mesmo tempo, ou um broadcast ocorrendo enquanto um
-    cliente esta sendo removido da lista).
-    """
+    # guarda os clientes conectados e roteia as mensagens entre eles.
+    # self.clientes e compartilhado entre threads, por isso o Lock
 
     def __init__(self, host: str, porta: int, caminho_banco: str):
         self.host = host
         self.porta = porta
         self.caminho_banco = caminho_banco
-        self.clientes = {}  # usuario (str) -> ClienteConectado
+        self.clientes = {}  # usuario -> ClienteConectado
         self.trava = threading.Lock()
         self.socket_servidor = None
-
-    # ------------------------------------------------------------------ #
-    # Ciclo de vida do servidor
-    # ------------------------------------------------------------------ #
 
     def iniciar(self) -> None:
         bancodedados.inicializar_banco(self.caminho_banco)
         log(f"Banco de dados pronto em '{self.caminho_banco}' (historico de mensagens).")
 
         self.socket_servidor = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        # Permite reiniciar o servidor rapidamente na mesma porta (evita
-        # "Address already in use" logo apos um encerramento anterior).
         self.socket_servidor.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             self.socket_servidor.bind((self.host, self.porta))
@@ -117,11 +63,7 @@ class ServidorChat:
             sys.exit(1)
 
         self.socket_servidor.listen()
-        # Timeout no accept(): sem isso, a thread principal fica bloqueada
-        # indefinidamente dentro de uma chamada C, e o Windows em particular
-        # pode nao entregar o KeyboardInterrupt (Ctrl+C) a tempo -- com o
-        # timeout, o loop volta ao interpretador Python a cada 1s, momento
-        # em que um Ctrl+C pendente e processado prontamente.
+        # timeout no accept pra nao travar o ctrl+c no windows
         self.socket_servidor.settimeout(1.0)
         log(f"Servidor de chat escutando em {self.host}:{self.porta}")
         log("Aguardando conexoes de clientes... (Ctrl+C para encerrar)")
@@ -159,17 +101,14 @@ class ServidorChat:
             self.socket_servidor.close()
         log("Servidor encerrado.")
 
-    # ------------------------------------------------------------------ #
-    # Tratamento de cada cliente (uma thread por cliente)
-    # ------------------------------------------------------------------ #
-
     def _atender_cliente(self, sock: socket.socket, endereco) -> None:
+        # roda numa thread propria por conexao
         cliente = ClienteConectado(sock, endereco)
         log(f"Nova conexao de {endereco[0]}:{endereco[1]}")
 
         try:
             if not self._processar_login(cliente):
-                return  # login falhou; socket ja foi fechado em _processar_login
+                return
 
             self._notificar_entrada(cliente)
 
@@ -186,7 +125,7 @@ class ServidorChat:
                     continue
 
                 if mensagem is None:
-                    break  # cliente fechou a conexao abruptamente
+                    break
 
                 self._rotear_mensagem(cliente, mensagem)
                 if not cliente.ativo:
@@ -196,10 +135,7 @@ class ServidorChat:
             self._remover_cliente(cliente)
 
     def _processar_login(self, cliente: ClienteConectado) -> bool:
-        """Le a mensagem LOGIN inicial e valida o apelido. Nao ha senha nem
-        conta: o apelido sozinho identifica o cliente (requisito
-        obrigatorio do trabalho), e so e recusado se ja estiver em uso por
-        uma sessao ativa no momento."""
+        # espera LOGIN como primeira mensagem, valida apelido e checa duplicidade
         try:
             mensagem = cliente.leitor.proxima_mensagem()
         except (ConnectionResetError, ConnectionAbortedError, OSError, ValueError):
@@ -237,18 +173,12 @@ class ServidorChat:
         return True
 
     def _enviar_historico_privado(self, cliente: ClienteConectado) -> None:
-        """Envia ao cliente, logo apos o login, o historico de mensagens
-        PRIVADAS que ele enviou ou recebeu (independe de sala)."""
         historico = bancodedados.buscar_privadas(self.caminho_banco, cliente.usuario)
         if historico:
             protocolo.enviar(cliente.sock, {"tipo": "HISTORICO", "mensagens": historico})
 
     def _enviar_historico_geral(self, cliente: ClienteConectado) -> None:
-        """Envia ao cliente, ao entrar numa sala (login ou ENTRAR_SALA), as
-        mensagens gerais daquela sala que ele perdeu desde a ultima vez que
-        esteve nela (ver bancodedados.registrar_saida_sala/
-        buscar_gerais_perdidas). Quem nunca esteve na sala nao recebe nada
-        -- so passa a ver as mensagens dali em diante, ao vivo."""
+        # so manda o que foi perdido desde a ultima saida dessa sala
         perdidas = bancodedados.buscar_gerais_perdidas(self.caminho_banco, cliente.usuario, cliente.sala)
         if perdidas:
             protocolo.enviar(cliente.sock, {"tipo": "HISTORICO", "sala": cliente.sala, "mensagens": perdidas})
@@ -260,10 +190,6 @@ class ServidorChat:
             pass
         finally:
             cliente.sock.close()
-
-    # ------------------------------------------------------------------ #
-    # Roteamento de mensagens apos login
-    # ------------------------------------------------------------------ #
 
     def _rotear_mensagem(self, cliente: ClienteConectado, mensagem: dict) -> None:
         tipo = mensagem.get("tipo")
@@ -304,11 +230,7 @@ class ServidorChat:
             )
 
     def _notificar_digitando_privado(self, cliente: ClienteConectado, destino: str) -> None:
-        """Repassa o aviso de 'digitando' apenas ao destinatario da privada.
-        Efemero: se o destinatario nao existir mais (ja desconectou), o
-        aviso e simplesmente descartado, sem gerar ERRO (nao vale a pena
-        incomodar quem esta digitando por causa de um aviso de baixa
-        importancia como esse)."""
+        # efemero, nao salva no banco. se o destino sumiu, so ignora
         with self.trava:
             alvo = self.clientes.get(destino)
         if alvo is None:
@@ -319,7 +241,6 @@ class ServidorChat:
             pass
 
     def _notificar_digitando_sala(self, cliente: ClienteConectado) -> None:
-        """Repassa o aviso de 'digitando' aos demais membros da sala atual."""
         with self.trava:
             destinatarios = [
                 c for nome, c in self.clientes.items()
@@ -329,9 +250,7 @@ class ServidorChat:
         self._enviar_para_varios(destinatarios, payload)
 
     def _broadcast(self, cliente: ClienteConectado, texto: str) -> None:
-        # O CONTEUDO da mensagem nao e logado no servidor (privacidade): o
-        # log so registra que uma mensagem foi enviada, por quem e em qual
-        # sala. O texto em si so aparece na tela dos clientes.
+        # log nao guarda o conteudo, so que uma mensagem foi enviada
         log(f"[{cliente.sala}] {cliente.usuario} enviou uma mensagem para a sala.")
         bancodedados.salvar_mensagem_geral(self.caminho_banco, cliente.usuario, cliente.sala, texto)
         payload = {"tipo": "MSG", "de": cliente.usuario, "sala": cliente.sala, "texto": texto}
@@ -351,8 +270,6 @@ class ServidorChat:
                 {"tipo": "ERRO", "mensagem": f"Usuario '{destino}' nao encontrado ou offline."},
             )
             return
-        # Idem: so registra QUE uma privada foi enviada e entre quem, nunca o
-        # conteudo (isso e assunto exclusivo dos dois clientes envolvidos).
         log(f"[PRIVADA] {cliente.usuario} -> {destino} (mensagem privada enviada).")
         bancodedados.salvar_mensagem_privada(self.caminho_banco, cliente.usuario, destino, texto)
         try:
@@ -369,10 +286,7 @@ class ServidorChat:
         protocolo.enviar(cliente.sock, {"tipo": "LISTA", "sala": cliente.sala, "usuarios": usuarios})
 
     def _enviar_lista_salas(self, cliente: ClienteConectado) -> None:
-        """Lista as salas que tem pelo menos um usuario conectado agora, com
-        a contagem de usuarios em cada uma (salas sem ninguem conectado nao
-        aparecem, mas continuam existindo em termos de historico salvo, e
-        voltam a aparecer assim que alguem entrar nelas de novo)."""
+        # so salas com gente conectada agora
         with self.trava:
             contagem = {}
             for c in self.clientes.values():
@@ -381,9 +295,7 @@ class ServidorChat:
         protocolo.enviar(cliente.sock, {"tipo": "LISTA_SALAS", "salas": salas})
 
     def _entrar_sala(self, cliente: ClienteConectado, sala: str) -> None:
-        """Move o cliente da sala atual para a sala pedida. Assim como o
-        apelido, a sala usa auto-criacao: nao precisa existir previamente,
-        basta ser um nome valido -- o primeiro a entrar "cria" a sala."""
+        # sala e auto-criada: o primeiro a entrar "cria" ela
         if not protocolo.validar_nome_sala(sala):
             protocolo.enviar(
                 cliente.sock,
@@ -400,9 +312,6 @@ class ServidorChat:
             protocolo.enviar(cliente.sock, {"tipo": "SALA_OK", "sala": sala})
             return
 
-        # Marca "agora" como o momento em que o cliente saiu da sala antiga,
-        # para que, se ele voltar a ela depois, saibamos a partir de onde
-        # reenviar as mensagens gerais que ele perdeu enquanto esteve fora.
         bancodedados.registrar_saida_sala(self.caminho_banco, cliente.usuario, sala_antiga)
 
         with self.trava:
@@ -437,13 +346,12 @@ class ServidorChat:
                 {
                     "tipo": "SISTEMA",
                     "mensagem": (
-                        f"Bem-vindo(a) ao chat! Voce esta na sala '{cliente.sala}'. Comandos disponiveis: "
-                        "/lista, /msg <usuario> <mensagem>, /salas, /entrar <sala>, /sair"
+                        f"Bem-vindo(a) ao chat! Voce esta na sala '{cliente.sala}'"
                     ),
                 },
             )
         except OSError:
-            pass  # cliente ja desconectou entre o login e este envio; a limpeza ocorrera no loop principal
+            pass
 
     def _remover_cliente(self, cliente: ClienteConectado) -> None:
         removido = False
@@ -454,9 +362,6 @@ class ServidorChat:
             destinatarios = [c for c in self.clientes.values() if c.sala == cliente.sala]
 
         if cliente.usuario:
-            # Registra o momento da desconexao como "saida" da sala em que
-            # estava, pelo mesmo motivo do ENTRAR_SALA: permitir reenviar,
-            # numa proxima conexao, so as mensagens gerais perdidas.
             bancodedados.registrar_saida_sala(self.caminho_banco, cliente.usuario, cliente.sala)
 
         try:
@@ -475,27 +380,14 @@ class ServidorChat:
             try:
                 protocolo.enviar(c.sock, payload)
             except OSError:
-                pass  # a limpeza da conexao morta ocorrera quando a thread dela detectar a falha
+                pass
 
 
 def main():
     parser = argparse.ArgumentParser(description="Servidor de chat cliente-servidor (TCP).")
-    parser.add_argument(
-        "--host",
-        default="0.0.0.0",
-        help="Endereco/interface em que o servidor vai escutar (padrao: 0.0.0.0, todas as interfaces).",
-    )
-    parser.add_argument(
-        "--porta",
-        type=int,
-        default=5000,
-        help="Porta TCP em que o servidor vai escutar (padrao: 5000).",
-    )
-    parser.add_argument(
-        "--banco",
-        default="chat.db",
-        help="Caminho do arquivo SQLite para o historico de mensagens privadas (padrao: chat.db).",
-    )
+    parser.add_argument("--host", default="0.0.0.0", help="Endereco/interface em que o servidor vai escutar.")
+    parser.add_argument("--porta", type=int, default=5000, help="Porta TCP em que o servidor vai escutar.")
+    parser.add_argument("--banco", default="chat.db", help="Caminho do arquivo SQLite para o historico.")
     args = parser.parse_args()
 
     servidor = ServidorChat(host=args.host, porta=args.porta, caminho_banco=args.banco)
